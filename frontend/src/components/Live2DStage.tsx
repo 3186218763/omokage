@@ -24,6 +24,7 @@ export const Live2DStage = forwardRef<Live2DHandle, Live2DStageProps>(
   });
   const mouthRef = useRef(0);
   const [ready, setReady] = useState(false);
+  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
 
   useImperativeHandle(ref, () => ({
     setMouth(value: number) {
@@ -56,8 +57,11 @@ export const Live2DStage = forwardRef<Live2DHandle, Live2DStageProps>(
       const manifest = (await response.json()) as {
         model_url?: string;
         core_url?: string;
+        background_url?: string | null;
       };
-      if (!manifest.model_url || !manifest.core_url || cancelled) return;
+      if (cancelled) return;
+      if (manifest.background_url) setBackgroundUrl(manifest.background_url);
+      if (!manifest.model_url || !manifest.core_url) return;
       try {
         controller = await mountStage(host, {
           model_url: manifest.model_url,
@@ -86,6 +90,13 @@ export const Live2DStage = forwardRef<Live2DHandle, Live2DStageProps>(
 
   return (
     <div className={styles.wrap} onClick={onClick}>
+      {backgroundUrl ? (
+        <div
+          className={styles.backdrop}
+          style={{ backgroundImage: `url("${backgroundUrl}")` }}
+          aria-hidden="true"
+        />
+      ) : null}
       <div className={styles.host} ref={hostRef} />
       <div className={`${styles.fallback} ${ready ? styles.hidden : ""}`} aria-hidden="true">
         菜

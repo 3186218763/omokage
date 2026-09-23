@@ -22,6 +22,7 @@ class Live2DAssets:
     model_dir: Path | None
     model_json: Path | None
     core_path: Path
+    background: Path | None
     missing: tuple[str, ...]
 
     @property
@@ -34,6 +35,13 @@ class Live2DAssets:
     @property
     def core_url(self) -> str:
         return "/live2d/core/live2dcubismcore.min.js"
+
+    @property
+    def background_url(self) -> str | None:
+        if self.background is None:
+            return None
+        relative = self.background.resolve().relative_to(self.root.resolve())
+        return "/live2d/" + relative.as_posix()
 
 
 def _model_jsons(directory: Path) -> list[Path]:
@@ -68,7 +76,31 @@ def resolve_model_dir(root: Path, configured: str = "") -> Path | None:
     return None
 
 
-def assess(root: Path | None = None, configured_model_dir: str = "") -> Live2DAssets:
+def resolve_background(root: Path, configured: str = "") -> Path | None:
+    """背景纯装饰、可选：配置了但缺失时只回 None，不影响 ready。"""
+    if configured.strip():
+        raw = Path(configured.strip())
+        path = raw if raw.is_absolute() else root / raw
+        if not _inside(root, path) or not path.is_file():
+            return None
+        return path
+    backgrounds = root / "backgrounds"
+    if not backgrounds.is_dir():
+        return None
+    day = backgrounds / "clubroom-day.jpg"
+    if day.is_file():
+        return day
+    images = sorted(
+        p for p in backgrounds.iterdir() if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+    )
+    return images[0] if images else None
+
+
+def assess(
+    root: Path | None = None,
+    configured_model_dir: str = "",
+    configured_background: str = "",
+) -> Live2DAssets:
     live2d_root = (root or DEFAULT_LIVE2D_ROOT).resolve()
     core_path = live2d_root / CORE_RELATIVE
     missing: list[str] = []
@@ -92,6 +124,7 @@ def assess(root: Path | None = None, configured_model_dir: str = "") -> Live2DAs
         model_dir=model_dir,
         model_json=model_json,
         core_path=core_path,
+        background=resolve_background(live2d_root, configured_background),
         missing=tuple(missing),
     )
 
@@ -100,6 +133,7 @@ def main() -> int:
     status = assess()
     if status.ready:
         print(f"live2d ready: {status.model_json}")
+        print(f"background: {status.background if status.background else '（无，舞台用渐变兜底）'}")
         return 0
     print("Live2D 资产未就绪。请放入：", file=sys.stderr)
     for item in status.missing:

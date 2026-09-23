@@ -10,6 +10,15 @@
 .fallback {
   grid-area: 1 / 1;
 }
+
+.backdrop {
+  grid-area: 1 / 1;
+  background-color: #241d20;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
 .host {
   min-height: 0;
 }

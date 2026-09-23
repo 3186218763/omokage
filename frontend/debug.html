@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>表演层调试：Kev 情绪 × Live2D 动作</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: #101416; color: #f1ece7;
+        font: 14px/1.6 system-ui, sans-serif;
+      }
+      h1 { font-size: 18px; margin: 16px 20px 4px; }
+      .sub { color: #9aa4a8; margin: 0 20px 16px; font-size: 13px; }
+      .cols { display: flex; gap: 20px; padding: 0 20px 40px; align-items: flex-start; flex-wrap: wrap; }
+      .panel { flex: 1 1 460px; max-width: 640px; }
+      .panel h2 { font-size: 15px; margin: 0 0 4px; }
+      .panel .note { color: #9aa4a8; font-size: 12px; margin: 0 0 10px; }
+      .stage {
+        position: relative; width: 100%; height: 420px; border-radius: 12px;
+        background: linear-gradient(#2a3238, #1a2024); overflow: hidden;
+      }
+      .controls { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+      .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+      .row .label { width: 64px; color: #9aa4a8; font-size: 12px; flex: none; }
+      button {
+        background: #232b31; color: #f1ece7; border: 1px solid #39434a;
+        border-radius: 8px; padding: 5px 12px; cursor: pointer; font: inherit;
+      }
+      button:hover { background: #2c363d; }
+      button.active { background: #3d5a73; border-color: #5a86ab; }
+      button:disabled { opacity: 0.45; cursor: default; }
+      .status { margin-top: 10px; font-size: 12px; color: #8fd0a0; min-height: 18px; }
+      input[type="range"] { width: 160px; }
+      .err { color: #e08c8c; }
+    </style>
+  </head>
+  <body>
+    <h1>表演层调试台</h1>
+    <p class="sub">
+      左：App 真实代码路径（mountStage：SoullinkRuntime 情绪底色 + 程序化句级动作）。
+      右：Hiyori 模型自带 motion3.json 动作组（Idle / TapBody，经 applyNativeAnimation 播放）。
+    </p>
+    <div class="cols">
+      <section class="panel">
+        <h2>① Kev 表演情绪 + 句级动作（App 路径）</h2>
+        <p class="note">6 情绪 × 3 强度（mild 0.6 / moderate 0.9 / strong 1.0）；惊讶带 1200ms 衰减回落。动作闭集：点头 / 摇头 / 歪头（占线丢弃）。</p>
+        <div id="stage-app" class="stage"></div>
+        <div class="controls" id="controls-app"></div>
+        <div class="status" id="status-app"></div>
+      </section>
+      <section class="panel">
+        <h2>② Hiyori 原生动作组（资产层）</h2>
+        <p class="note">model3.json 的 Idle 组（m01–m03, m05–m10）与 TapBody 组（m04）。App 当前未接线，这里直连渲染器验证资产本身。</p>
+        <div id="stage-native" class="stage"></div>
+        <div class="controls" id="controls-native"></div>
+        <div class="status" id="status-native"></div>
+      </section>
+      <section class="panel">
+        <h2>③ 原型：说话窗口对齐的动作（研究用，可删）</h2>
+        <p class="note">同一句真实 TTS 音频下对比：现状（句首单次 0.8s）vs 提案（按音频时长重复点头/摇头、歪头倾入-保持-释放）。口型由音频 RMS 驱动。</p>
+        <div id="stage-proto" class="stage"></div>
+        <div class="controls" id="controls-proto"></div>
+        <div class="status" id="status-proto"></div>
+      </section>
+    </div>
+    <script type="module" src="/src/debug.ts"></script>
+  </body>
+</html>

@@ -12,9 +12,10 @@ model/*.ckpt
 model/*.pth
 model/*.safetensors
 
-# Live2D Cubism Core 与模型（许可文件，人本地放置）
+# Live2D Cubism Core、模型与背景（许可文件，人本地放置）
 resources/live2d/core/
 resources/live2d/models/
+resources/live2d/backgrounds/
 # 数据本地保留，不推远程（训练/采集产物）
 data/
 

@@ -23,6 +23,11 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** 队列键是 `${messageId}:${index}`，取消息前缀用于界定顺序推进的边界。 */
+function messageOf(key: string): string {
+  return key.slice(0, key.lastIndexOf(":"));
+}
+
 export function useAudioQueue(options?: {
   onRms?: (value: number) => void;
   onItemStart?: (item: QueueItem) => void;
@@ -112,9 +117,12 @@ export function useAudioQueue(options?: {
     const list = itemsRef.current;
     const cur = activeRef.current;
     const index = list.findIndex((item) => item.key === cur);
-    const next = list[index + 1];
-    if (next) playItem(next);
-    else {
+    const next = index >= 0 ? list[index + 1] : undefined;
+    // 只在同一条消息内顺序推进：items 跨轮累积，越过消息边界会把
+    // 之前各轮的语音接着滚播出去。
+    if (next && cur !== null && messageOf(next.key) === messageOf(cur)) {
+      playItem(next);
+    } else {
       setActiveKey(null);
       setIsPlaying(false);
     }
@@ -178,13 +186,15 @@ export function useAudioQueue(options?: {
     }, 230);
   }, [clear]);
 
-  // 队列首次获得条目时自动播放（enqueue 只入队，播放由本 effect 驱动）；
+  // 队列获得新条目时自动播放（enqueue 只入队，播放由本 effect 驱动）；
   // 播放中/用户手动暂停时 activeRef 非 null 会跳过，不打断用户控制。
+  // 空闲时必须从最新入队的条目开播：items 是整个会话的累积列表，
+  // 从头播会把之前各轮的语音重播一遍。
   useEffect(() => {
-    const first = items[0];
-    if (!first) return;
+    const last = items[items.length - 1];
+    if (!last) return;
     if (activeRef.current === null && audioRef.current?.paused) {
-      playItem(first);
+      playItem(last);
     }
   }, [items, playItem]);
 
