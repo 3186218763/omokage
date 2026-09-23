@@ -1,0 +1,74 @@
+# 花音 Style-Bert-VITS2 配方
+# 2026-09-21 从 GPT-SoVITS 路线切到 SBV2；训练数据仍是 dataset_precision。
+#
+# 相关:
+#   data/dataset_precision/          高精度中文切片（保留）
+#   data/sbv2/huayin/                导出后的 SBV2 训练集
+#   scripts/export_sbv2_dataset.py
+#   scripts/train_sbv2.py
+#   scripts/run_sbv2_api.py
+
+meta:
+  name: huayin-sbv2
+  engine: style-bert-vits2
+  version: "2.7"
+  locked_at: "2026-09-21"
+  status: serving-v2
+  notes: >
+    单说话人中文微调。v1（2026-09-21，50 epoch，BERT 未冻结，batch 4 / fp32）
+    损失早平台，仅 Neutral 风格。v2 从预训练重开：冻结三语 BERT、bf16、
+    100 epoch、双卡有效 batch 4、轻度学习率衰减。推理在 v2 评测前锁定
+    huayin_e50_s14750.safetensors。对外仍只暴露 POST /tts {"text": "..."}。
+
+paths:
+  project_root: /home/mtr/tt/omokage
+  sbv2_root: /home/mtr/tt/Style-Bert-VITS2
+  source_dataset: data/dataset_precision
+  annotation_list: data/dataset_precision/annotation.list
+  audio_dir: data/dataset_precision/audio
+  sbv2_dataset: data/sbv2/huayin
+  model_name: huayin
+  assets_dir: /home/mtr/tt/Style-Bert-VITS2/model_assets/huayin
+  log_file: logs/train_huayin_sbv2.log
+  tmux_session: huayin-sbv2-train
+
+dataset:
+  n_clips: 1179
+  language: ZH
+  speaker: 花音
+  hours_approx: 1.25
+  source_sr: 32000
+  target_sr: 44100
+
+train:
+  batch_size: 2          # per GPU; 2 GPU × 2 = effective batch 4, matches duration buckets
+  epochs: 100
+  save_every_steps: 1000
+  num_processes: 8
+  val_per_lang: 12
+  log_interval: 50
+  learning_rate: 0.0002
+  lr_decay: 0.995
+  warmup_epochs: 2
+  gpus: 2
+  cuda_visible_devices: "0,1"
+  freeze_bert: true
+  bf16: true
+  yomi_error: skip
+  normalize: true
+  trim: false
+  use_jp_extra: false
+
+inference:
+  host: 127.0.0.1
+  port: 5000
+  device: cuda
+  language: ZH
+  speaker_name: 花音
+  style: Neutral
+  style_weight: 1.0
+  weight: huayin_e100_s29500.safetensors
+  length: 1.0
+  sdp_ratio: 0.2
+  noise: 0.6
+  noisew: 0.8

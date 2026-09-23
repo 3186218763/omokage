@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 
 from .conversation import Conversation
 from .memory import prepare_chat_messages
+from .motion import MotionPolicy
 from .sentence_streamer import SentenceStreamer
 from .speaking_style import SpeakingStyleRefBank, StylePrefixParser
 from .speech_text import normalize_speech_text, strip_style_for_history
@@ -45,6 +46,7 @@ class Orchestrator:
             messages = await prepare_chat_messages(self._llm, conversation)
             streamer = SentenceStreamer(self._max_chars, min_chars=self._min_chars)
             style_parser = StylePrefixParser()
+            motion_policy = MotionPolicy()
             full_speech = ""
             ref_kwargs: dict[str, str] = {}
 
@@ -95,7 +97,8 @@ class Orchestrator:
                         continue
                     full_speech += speech_chunk
                     for raw_sentence in streamer.add_token(speech_chunk):
-                        sentence = normalize_speech_text(raw_sentence)
+                        _, stripped = motion_policy.take(raw_sentence)
+                        sentence = normalize_speech_text(stripped)
                         if sentence:
                             await tts_queue.put(sentence)
                             yield sentence
@@ -104,14 +107,16 @@ class Orchestrator:
                 if tail:
                     full_speech += tail
                     for raw_sentence in streamer.add_token(tail):
-                        sentence = normalize_speech_text(raw_sentence)
+                        _, stripped = motion_policy.take(raw_sentence)
+                        sentence = normalize_speech_text(stripped)
                         if sentence:
                             await tts_queue.put(sentence)
                             yield sentence
 
                 remaining = streamer.flush()
                 if remaining:
-                    sentence = normalize_speech_text(remaining)
+                    _, stripped = motion_policy.take(remaining)
+                    sentence = normalize_speech_text(stripped)
                     if sentence:
                         await tts_queue.put(sentence)
                         yield sentence

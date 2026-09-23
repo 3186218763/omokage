@@ -1,5 +1,5 @@
 {
-  "name": "ai-huayin-web",
+  "name": "omokage",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -9,6 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@soullink-emotion/engine": "^0.1.0-beta.1",
+    "@soullink-emotion/live2d-pixi": "^0.1.0-beta.1",
+    "@soullink-emotion/profile-generator": "^0.1.0-beta.1",
+    "pixi.js": "^7.4.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

@@ -18,7 +18,7 @@ fi
 
 tmux new-session -d -s "$SESSION" -n pass3 "bash -lc '
 set -uo pipefail
-cd /home/mtr/tt/tts
+cd /home/mtr/tt/omokage
 : > logs/pass3_pipeline.log
 echo \"=== [1/4] pass3 ASR (mid zh, gpus 0,1) === $(date) \" | tee -a logs/pass3_pipeline.log
 /home/mtr/miniconda3/envs/gptsovits/bin/python scripts/retranscribe_pass3.py --gpus 0,1 2>&1 | tee -a logs/pass3_zh.log

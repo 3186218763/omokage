@@ -51,22 +51,31 @@ def call_batch(api_key: str, base_url: str, model: str, items: list[str]) -> lis
     lines = "\n".join(f"{i}. {text}" for i, text in enumerate(items))
     payload = {
         "model": model,
-        "messages": [
+        "input": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"请校对以下 {len(items)} 条转录：\n{lines}"},
         ],
         "temperature": 0.2,
-        "max_tokens": 4000,
+        "max_output_tokens": 4000,
     }
     with httpx.Client(timeout=180) as client:
         resp = client.post(
-            f"{base_url.rstrip('/')}/chat/completions",
+            f"{base_url.rstrip('/')}/responses",
             headers={"Authorization": f"Bearer {api_key}"},
             json=payload,
         )
         resp.raise_for_status()
         data = resp.json()
-    content = data["choices"][0]["message"]["content"]
+    content = data.get("output_text") or ""
+    if not content:
+        texts: list[str] = []
+        for item in data.get("output") or []:
+            if item.get("type") != "message":
+                continue
+            for part in item.get("content") or []:
+                if part.get("type") == "output_text" and part.get("text"):
+                    texts.append(part["text"])
+        content = "".join(texts)
     # strip code fences if the model wraps JSON
     content = content.strip()
     if content.startswith("```"):

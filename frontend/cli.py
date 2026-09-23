@@ -21,25 +21,10 @@ async def main() -> None:
         api_key=config.llm.api_key,
         base_url=config.llm.base_url,
         model=config.llm.model,
-        protocol=config.llm.protocol,
         temperature=config.llm.temperature,
         max_tokens=config.llm.max_tokens,
-        frequency_penalty=config.llm.frequency_penalty,
     )
-    tts = TTSClient(
-        base_url=config.tts.base_url,
-        ref_audio_path=config.tts.ref_audio_path,
-        ref_text=config.tts.ref_text,
-        ref_language=config.tts.ref_language,
-        text_language=config.tts.text_language,
-        top_k=config.tts.top_k,
-        top_p=config.tts.top_p,
-        temperature=config.tts.temperature,
-        repetition_penalty=config.tts.repetition_penalty,
-        speed_factor=config.tts.speed_factor,
-        seed=config.tts.seed,
-        text_split_method=config.tts.text_split_method,
-    )
+    tts = TTSClient(base_url=config.tts.base_url, timeout=config.tts.timeout)
     try:
         await tts.check_available()
     except RuntimeError as exc:

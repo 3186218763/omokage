@@ -6,7 +6,7 @@ const STATUS_TEXT: Record<Status, string> = {
   generating: "生成中…",
   recording: "录音中…",
   transcribing: "识别中…",
-  "needs-key": "请配置 DeepSeek API key",
+  "needs-key": "请配置 LLM API key",
   "tts-down": "TTS 服务未启动",
   "asr-disabled": "在线（语音不可用）",
   "mic-error": "无法访问麦克风",

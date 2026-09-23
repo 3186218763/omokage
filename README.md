@@ -1,17 +1,22 @@
-# AI 真白花音 TTS 交互对话系统
+# omokage
 
-让用户与虚拟歌手 **真白花音（ましろ・はな）** 进行实时语音对话：输入文字（或语音），
-云端 LLM 生成花音风格的台词，本地 GPT-SoVITS 以花音音色合成语音并播放。
-项目同时包含从 B 站素材采集到 GPT-SoVITS 微调训练的完整数据管线。
+虚拟人物重现：把一个人的台词、声线与在场表演合成可对话的纪念向 AI。
+当前重现的是虚拟歌手 **真白花音（ましろ・はな）**。输入文字（或语音），
+云端 LLM 生成花音风格的台词，本地 Style-Bert-VITS2 以花音音色合成语音并播放。
+项目同时包含从 B 站素材采集到说话人微调的数据管线；声线引擎已从 GPT-SoVITS 切到 Style-Bert-VITS2。
 
 ## 功能特性
 
+- **Live2D 舞台**：整页只有模型。她的台词在底部对话框里按正在说的那一句弹出，语音同步播放；左上角「记录」打开这一段对话。口型跟正在播放的合成音，表演情绪先跟说话语气，本地 Kev（或托管 Jev）返回后再覆盖。决策题是英文，映射回中文闭集。缺模型时占位为「菜」。资产说明见 [`resources/live2d/README.md`](resources/live2d/README.md)
+- **句级动作**：LLM 按闭集（点头/摇头/歪头）在句前自标 `【动作:点头】` 一类标签（不朗读、不进 UI、不进历史），前端在对应句起幅做程序化动作，叠加在表演情绪底色上；一轮至多 2 个、相邻不重词，服务端强制执行
+- **打断（让路）**：她说话时点麦克风开口或点舞台，当前语音 ~200ms 淡出、本轮剩余合成与生成停止；已说出的句子照常进对话历史（她说过的算说过），与断连回滚是两种语义
 - **流式语音对话**：LLM 边生成、TTS 边合成、喇叭边播放，asyncio 三段流水线并行，首音延迟低
 - **长对话记忆**：最近 `recent_turns` 轮保留原文，更早历史滚动压缩为 LLM 摘要，可支撑数百轮对话
-- **自然语音切分**：按句末标点 / 逗号 / 空格切句，保护括号动作与引用，超长文本由 GPT-SoVITS `cut5` 兜底
-- **CLI 与 Web 双前端**：CLI 本地播放；Web（React + TypeScript）支持 SSE 流式文字 + WAV 音频、浏览器录音（faster-whisper 本地转写），暖夜深色界面
+- **自然语音切分**：按句末标点 / 逗号 / 空格切句，保护括号动作与引用
+- **CLI 与 Web 双前端**：CLI 本地播放；Web（React + TypeScript）是整页 Live2D，SSE 流式台词进对话框，WAV 同步播放，浏览器录音（faster-whisper 本地转写）
 - **训练数据管线**：白名单采集 → 人声分离 → 静音切分 → 歌声/能量过滤 → 声纹过滤 → ASR 转写 → 音文一致性校验，全阶段增量断点续跑
-- **无头训练**：一条命令完成 GPT-SoVITS v2Pro 微调（文本特征 → Hubert → 语义 token → SoVITS → GPT）
+- **无头训练**：导出 `dataset_precision` 为 Style-Bert-VITS2 布局后微调（resample → 文本 → BERT/style → train_ms）
+- **专属声音 API**：`POST /tts {"text": "你好"}` 永远是花音这一条声线，调用方不能换说话人
 
 ## 快速开始
 
@@ -27,16 +32,30 @@ pip install -e '.[web]'     # 额外安装 FastAPI + uvicorn + faster-whisper
 
 ```bash
 cp configs/config.example.yaml configs/config.yaml
-# 编辑 configs/config.yaml：填入 DeepSeek API key、模型与 GPT-SoVITS 地址
+# 编辑 configs/config.yaml：填入 LLM API key、模型与 Style-Bert-VITS2 API 地址
 ```
 
-**TTS 满意配方（训练/选模/推理全参数）已锁定：** [`configs/huayin_precision.yaml`](configs/huayin_precision.yaml)
+**TTS 配方：** [`configs/huayin_sbv2.yaml`](configs/huayin_sbv2.yaml)
 
-### 3. 启动 GPT-SoVITS TTS 服务
+### 3. 启动 Style-Bert-VITS2 TTS 服务
 
 ```bash
-# 使用安装了 GPT-SoVITS 依赖的 Python 环境启动推理 API（默认 127.0.0.1:9880）
-python scripts/run_huayin_api.py --python /path/to/gptsovits/bin/python
+# 一次性安装 Style-Bert-VITS2 训练/推理环境（conda env: sbv2）
+bash scripts/setup_sbv2.sh
+
+# 先导出数据并完成微调，再启动锁定声线的 API
+python scripts/export_sbv2_dataset.py
+python scripts/train_sbv2.py
+python scripts/run_sbv2_api.py --host 127.0.0.1 --port 5000
+```
+
+对外合成接口（说话人在服务端锁定，请求里多带的 speaker/style 会被忽略）：
+
+```bash
+curl -X POST http://127.0.0.1:5000/tts \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"你好"}' \
+  --output hello.wav
 ```
 
 ### 4. 对话
@@ -64,8 +83,9 @@ python scripts/test_huayin_tts.py "你好，今天也要加油。"
 ├── config.py                    # 类型化配置加载（YAML → dataclass）
 ├── configs/config.example.yaml  # 配置模板（实际配置 config.yaml 被 gitignore）
 ├── dialogue/                    # 对话核心
-│   ├── llm_client.py            # OpenAI 兼容 / Anthropic 原生双协议流式客户端 + 摘要接口
-│   ├── tts_client.py            # GPT-SoVITS TTS API 客户端（统一接口，可换引擎）
+│   ├── llm_client.py            # OpenAI Responses 流式客户端 + 摘要接口
+│   ├── tts_client.py            # Style-Bert-VITS2 TTS API 客户端（只发 text）
+│   ├── tts_api.py               # 锁定声线的 POST /tts FastAPI 应用
 │   ├── asr_client.py            # 本地 faster-whisper 转写（懒加载）
 │   ├── conversation.py          # 对话历史：近期原文 + 滚动摘要 + 原子压缩
 │   ├── memory.py                # CLI/Web 共用的记忆压缩与上下文组装
@@ -83,15 +103,15 @@ python scripts/test_huayin_tts.py "你好，今天也要加油。"
 ├── scripts/                     # 数据管线 / 训练 / 运维脚本（见下表）
 ├── data/                        # 数据管线各阶段产物（见下）
 ├── model/                       # 训练好的模型权重（Git LFS）
-└── tests/                       # pytest 测试（198 个，全部 mock，不依赖外部服务）
+└── tests/                       # pytest 测试（全部 mock，不依赖外部服务）
 ```
 
 ## 配置说明
 
 | 配置节 | 关键项 | 说明 |
 |--------|--------|------|
-| `llm` | `api_key` / `base_url` / `model` / `protocol` | DeepSeek 兼容接口；`protocol` 支持 `openai`（默认）与 `anthropic` 原生协议；`temperature 0.8`、`max_tokens 400`、`frequency_penalty 0.15` 适合口语对话 |
-| `tts` | `base_url` / `ref_audio_path` / `ref_text` | GPT-SoVITS 地址与参考音频；采样参数为可复现的保守默认（固定 `seed 42`） |
+| `llm` | `api_key` / `base_url` / `model` | OpenAI Responses 接口（`/v1/responses`）；`temperature 0.8`、`max_tokens 400` 适合口语对话 |
+| `tts` | `base_url` / `model_name` / `speaker_name` | Style-Bert-VITS2 锁定声线 API；客户端只发 `text`，说话人在服务端固定为花音 |
 | `asr` | `model` / `device` / `compute_type` | 浏览器录音转写，默认 `small`，首次使用会下载模型 |
 | `conversation` | `recent_turns` / `summary_trigger_turns` / `summary_trigger_chars` / `summary_max_chars` | 记忆分层阈值；旧配置 `max_turns` 仍作为 `recent_turns` 别名 |
 | `streaming` | `min_sentence_chars` / `max_sentence_chars` | 切句边界，默认 4 / 50 字 |
@@ -110,7 +130,9 @@ python scripts/test_huayin_tts.py "你好，今天也要加油。"
 **流水线**：`Orchestrator.chat()` 中 LLM 流式输出 → 切句 → `tts_queue` 合成（失败只跳过
 该句音频）→ `audio_queue` 顺序播放；LLM 异常时回滚当前用户消息。Web 端每个
 `session_id` 有独立 `asyncio.Lock`，同一会话请求严格串行，SSE 事件类型：
-`sentence` / `audio`（base64 WAV）/ `done` / `error` / `audio_error`。
+`sentence` / `motion` / `audio`（base64 WAV）/ `performance` / `interrupted` / `done` / `error` / `audio_error`。
+打断是独立信号（`POST /api/interrupt`），不抢会话锁：正在流式的一轮在句边界停下，
+部分回复进历史；客户端断连仍整轮回滚。
 
 ## 数据管线
 
@@ -149,32 +171,31 @@ python scripts/build_dataset.py --stage dataset --require-alignment
 拉丁字符占比过高等 Whisper 幻觉模式。`run_dataset_supervisor.py` 可监控分离完成后
 自动跑完后续阶段；`dataset_progress.py` 输出各阶段规模统计。
 
-## 训练
+## 训练（Style-Bert-VITS2）
+
+保留的数据是 `data/dataset_precision/`（1179 条中文，约 1.25 小时）。导出为 SBV2 的 `raw/` + `esd.list` 后微调：
 
 ```bash
-python scripts/train_gpt_sovits.py \
-  --exp-name huayin \
-  --list-path data/dataset/annotation.list \
-  --wav-dir data/dataset/audio \
-  --version v2Pro \
-  --gpus 0-1
+python scripts/export_sbv2_dataset.py
+# 需要已安装的 Style-Bert-VITS2 仓库（python initialize.py --skip_default_models）
+python scripts/train_sbv2.py --sbv2-root /home/mtr/tt/Style-Bert-VITS2
+# 或后台: bash scripts/run_sbv2_train_tmux.sh start
 ```
 
-脚本在 GPT-SoVITS 仓库环境下无头执行 WebUI 1A/1B/1C 全流程。当前交付模型（均在 `model/`）：
-
-- `model/huayin-gpt.ckpt`：GPT 语义模型（`dataset_precision` 验证最优，val top3 acc 0.250）
-- `model/huayin-sovits.pth`：SoVITS 声学模型（precision 全量 12 epoch）
-- `model/huayin-ref.wav`：参考音频
+推理资产写到 `Style-Bert-VITS2/model_assets/huayin/`（`config.json` + `*.safetensors` + `style_vectors.npy`）。
+本仓库 `model/` 只保留参考音，不再放 GPT-SoVITS 权重。
 
 ## 脚本清单
 
 | 脚本 | 职责 |
 |------|------|
-| `run_huayin_api.py` | 以交付权重启动 GPT-SoVITS `api_v2.py` 推理服务 |
-| `test_huayin_tts.py` | 单条文本本地推理测试（支持 `--dry-run`） |
+| `setup_sbv2.sh` | 创建 conda `sbv2` 环境并下载 BERT / 预训练权重 |
+| `export_sbv2_dataset.py` | 把 `dataset_precision` 导出为 Style-Bert-VITS2 `raw/` + `esd.list` |
+| `train_sbv2.py` / `run_sbv2_train_tmux.sh` | 无头预处理 + 微调 / tmux 启动 |
+| `run_sbv2_api.py` | 锁定花音声线的 `POST /tts` 推理服务 |
+| `test_huayin_tts.py` | 单条文本走 `/tts` 写 wav |
 | `p0_verify.py` | 文字 → LLM → TTS → 播放 端到端链路验证 |
 | `check_acceleration.py` | 检查当前环境可用的推理加速后端 |
-| `setup_gpt_sovits.sh` / `run_train_tmux.sh` | GPT-SoVITS 环境准备 / tmux 训练启动 |
 | `build_dataset.py` | 数据管线主入口（各阶段可单独运行） |
 | `run_parallel_separation.py` / `run_parallel_asr.py` | 多 GPU 并行分离 / 转写 |
 | `filter_speakers.py` | 花音声纹参考构建与逐切片打分 |
@@ -192,12 +213,12 @@ python scripts/train_gpt_sovits.py \
 python -m pytest -q
 ```
 
-198 个测试覆盖对话核心、切句、记忆压缩、流水线、Web SSE、配置加载与数据管线逻辑，
+pytest 覆盖对话核心、切句、记忆压缩、流水线、Web SSE、锁定声线 `/tts`、配置加载与数据管线逻辑，
 全部 mock 化，不依赖外部 API 或 GPU。
 
 ## 外部依赖说明
 
 - 可选重依赖均为**懒加载**：`librosa`（filter 阶段）、`faster-whisper`（ASR / Web 录音）、
-  `sounddevice` / `soundfile`（CLI 播放）、`audio_separator` 与 UVR5 权重（分离阶段，在
-  GPT-SoVITS 环境中运行），不安装也不会阻断其他命令。
+  `sounddevice` / `soundfile`（CLI 播放）、`audio_separator` 与 UVR5 权重（分离阶段），
+  以及独立的 Style-Bert-VITS2 训练/推理环境，不安装也不会阻断其他命令。
 - `data/` 仅跟踪 `training_assets.txt`；模型权重、数据集、中间产物均由 `.gitignore` 排除。

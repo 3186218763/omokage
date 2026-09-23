@@ -272,7 +272,7 @@
 ## 7. 单测
 
 ```bash
-/home/mtr/tt/tts/.venv/bin/python -m pytest \
+/home/mtr/tt/omokage/.venv/bin/python -m pytest \
   tests/test_persona.py tests/test_persona_context.py \
   tests/test_build_persona_review_queue.py tests/test_merge_persona_fewshot.py -v
 ```

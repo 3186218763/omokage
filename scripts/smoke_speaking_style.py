@@ -4,7 +4,7 @@
   # 仅 TTS：同一句台词 × 六类 ref → outputs/smoke_speaking_styles/
   python scripts/smoke_speaking_style.py
 
-  # 真实 LLM + TTS 两轮（需 config.yaml 与 9880）
+  # 真实 LLM + TTS 两轮（需 config.yaml 与 Style-Bert-VITS2 API）
   python scripts/smoke_speaking_style.py --live-llm
 """
 
@@ -32,20 +32,7 @@ DEFAULT_TEXT = "你好呀，今天也要加油哦。"
 
 
 def _tts_from_config(cfg) -> TTSClient:
-    return TTSClient(
-        base_url=cfg.tts.base_url,
-        ref_audio_path=cfg.tts.ref_audio_path,
-        ref_text=cfg.tts.ref_text,
-        ref_language=cfg.tts.ref_language,
-        text_language=cfg.tts.text_language,
-        top_k=cfg.tts.top_k,
-        top_p=cfg.tts.top_p,
-        temperature=cfg.tts.temperature,
-        repetition_penalty=cfg.tts.repetition_penalty,
-        speed_factor=cfg.tts.speed_factor,
-        seed=cfg.tts.seed,
-        text_split_method=cfg.tts.text_split_method,
-    )
+    return TTSClient(base_url=cfg.tts.base_url, timeout=cfg.tts.timeout)
 
 
 async def smoke_refs(text: str) -> None:
@@ -81,10 +68,8 @@ async def smoke_live_llm() -> None:
         api_key=cfg.llm.api_key,
         base_url=cfg.llm.base_url,
         model=cfg.llm.model,
-        protocol=cfg.llm.protocol,
         temperature=cfg.llm.temperature,
         max_tokens=cfg.llm.max_tokens,
-        frequency_penalty=cfg.llm.frequency_penalty,
     )
     tts = _tts_from_config(cfg)
     await tts.check_available()

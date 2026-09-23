@@ -9,19 +9,24 @@ import json
 import re
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from config import AppConfig, load_config
 from dialogue.asr_client import WhisperTranscriber
 from dialogue.conversation import Conversation
+from dialogue.jev_client import JevClient
 from dialogue.llm_client import LLMClient
 from dialogue.memory import prepare_chat_messages
+from dialogue.motion import MotionPolicy
+from dialogue.performance import from_speaking_style
 from dialogue.sentence_streamer import SentenceStreamer
 from dialogue.speaking_style import SpeakingStyleRefBank, StylePrefixParser
 from dialogue.speech_text import normalize_speech_text, strip_style_for_history
+from dialogue.tts_api import parse_tts_request
 from dialogue.tts_client import TTSClient
+from scripts.check_live2d_assets import DEFAULT_LIVE2D_ROOT, assess
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +60,21 @@ class _SessionState:
     conversation: Conversation
     lock: asyncio.Lock
     reservations: int = 0
+    interrupt: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+def parse_session_id(payload: Mapping[str, Any]) -> str:
+    """Validate and normalize a session_id (chat / reset / interrupt 共用)."""
+    session_id = payload.get("session_id", "default")
+    if not isinstance(session_id, str):
+        raise ValueError("session_id must be a string")
+    session_id = session_id.strip() or "default"
+    if len(session_id) > MAX_SESSION_ID_CHARS or not SESSION_ID_RE.fullmatch(session_id):
+        raise ValueError(
+            "session_id must contain only letters, numbers, '-' or '_' "
+            f"and be at most {MAX_SESSION_ID_CHARS} characters"
+        )
+    return session_id
 
 
 def parse_chat_request(payload: Mapping[str, Any]) -> tuple[str, str]:
@@ -65,17 +85,7 @@ def parse_chat_request(payload: Mapping[str, Any]) -> tuple[str, str]:
     message = message.strip()
     if len(message) > MAX_MESSAGE_CHARS:
         raise ValueError(f"message must be at most {MAX_MESSAGE_CHARS} characters")
-
-    session_id = payload.get("session_id", "default")
-    if not isinstance(session_id, str):
-        raise ValueError("session_id must be a string")
-    session_id = session_id.strip() or "default"
-    if len(session_id) > MAX_SESSION_ID_CHARS or not SESSION_ID_RE.fullmatch(session_id):
-        raise ValueError(
-            "session_id must contain only letters, numbers, '-' or '_' "
-            f"and be at most {MAX_SESSION_ID_CHARS} characters"
-        )
-    return message, session_id
+    return message, parse_session_id(payload)
 
 
 def sse_event(payload: Mapping[str, Any]) -> str:
@@ -94,19 +104,39 @@ class WebChatService:
         max_chars: int = 50,
         min_chars: int = 4,
         style_ref_bank: SpeakingStyleRefBank | None = None,
+        jev_client: JevClient | None = None,
     ):
         self._llm = llm_client
         self._tts = tts_client
         self._max_chars = max_chars
         self._min_chars = min_chars
         self._style_bank = style_ref_bank or SpeakingStyleRefBank()
+        self._jev = jev_client
 
     async def stream(
-        self, user_text: str, conversation: Conversation
+        self,
+        user_text: str,
+        conversation: Conversation,
+        *,
+        interrupt: asyncio.Event | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        """Stream events for one turn; honor the interrupt signal.
+
+        让路（interrupt 置位）：停 LLM 流、取消未送达的音频，已说出的句子
+        作为部分 assistant 消息进历史并发 ``interrupted`` 事件收尾。
+        断连（CancelledError）仍整轮回滚——两者语义不同。
+        """
         conversation.add_user_message(user_text)
         committed = False
+        interrupted = False
         pending_audio = None
+        jev_task: asyncio.Task | None = None
+
+        def hit() -> bool:
+            return interrupt is not None and interrupt.is_set()
+
+        if interrupt is not None:
+            interrupt.clear()  # 清掉上一轮可能残留的让路信号
         try:
             try:
                 messages = await prepare_chat_messages(self._llm, conversation)
@@ -114,11 +144,27 @@ class WebChatService:
                     self._max_chars, min_chars=self._min_chars
                 )
                 style_parser = StylePrefixParser()
+                motion_policy = MotionPolicy()
                 full_speech = ""
+                spoken: list[str] = []
                 ref_kwargs: dict[str, str] = {}
+                performance_sent = False
+
+                def take_performance() -> dict[str, Any] | None:
+                    nonlocal performance_sent
+                    if performance_sent or not style_parser.resolved:
+                        return None
+                    performance_sent = True
+                    return from_speaking_style(style_parser.style).as_event()
 
                 async for token in self._llm.stream_chat(messages):
+                    if hit():
+                        interrupted = True
+                        break
                     speech_chunk = style_parser.feed(token)
+                    performance = take_performance()
+                    if performance is not None:
+                        yield performance
                     if style_parser.resolved and not ref_kwargs:
                         clip = self._style_bank.resolve(style_parser.style)
                         if clip is not None:
@@ -131,56 +177,114 @@ class WebChatService:
                         continue
                     full_speech += speech_chunk
                     for raw_sentence in streamer.add_token(speech_chunk):
-                        sentence = normalize_speech_text(raw_sentence)
+                        motion, stripped = motion_policy.take(raw_sentence)
+                        sentence = normalize_speech_text(stripped)
                         if not sentence:
                             continue
+                        spoken.append(sentence)
                         if pending_audio is not None:
                             yield await self._audio_event(pending_audio)
+                        if motion is not None:
+                            yield {"type": "motion", "motion": motion}
                         yield {"type": "sentence", "text": sentence}
                         pending_audio = asyncio.create_task(
                             self._tts.synthesize(sentence, **ref_kwargs)
                         )
+                        if hit():
+                            interrupted = True
+                            break
+                    if interrupted:
+                        break
 
-                tail = style_parser.flush()
-                if tail:
-                    full_speech += tail
-                    for raw_sentence in streamer.add_token(tail):
-                        sentence = normalize_speech_text(raw_sentence)
-                        if sentence:
+                jev_decision = None
+                if not interrupted:
+                    tail = style_parser.flush()
+                    performance = take_performance()
+                    if performance is not None and (full_speech or tail):
+                        yield performance
+                    if tail:
+                        full_speech += tail
+                        for raw_sentence in streamer.add_token(tail):
+                            motion, stripped = motion_policy.take(raw_sentence)
+                            sentence = normalize_speech_text(stripped)
+                            if not sentence:
+                                continue
+                            spoken.append(sentence)
                             if pending_audio is not None:
                                 yield await self._audio_event(pending_audio)
+                            if motion is not None:
+                                yield {"type": "motion", "motion": motion}
                             yield {"type": "sentence", "text": sentence}
                             pending_audio = asyncio.create_task(
                                 self._tts.synthesize(sentence, **ref_kwargs)
                             )
 
-                remaining = streamer.flush()
-                if remaining:
-                    sentence = normalize_speech_text(remaining)
-                    if sentence:
-                        if pending_audio is not None:
-                            yield await self._audio_event(pending_audio)
-                        yield {"type": "sentence", "text": sentence}
-                        pending_audio = asyncio.create_task(
-                            self._tts.synthesize(sentence, **ref_kwargs)
+                    remaining = streamer.flush()
+                    if remaining:
+                        motion, stripped = motion_policy.take(remaining)
+                        sentence = normalize_speech_text(stripped)
+                        if sentence:
+                            spoken.append(sentence)
+                            if pending_audio is not None:
+                                yield await self._audio_event(pending_audio)
+                            if motion is not None:
+                                yield {"type": "motion", "motion": motion}
+                            yield {"type": "sentence", "text": sentence}
+                            pending_audio = asyncio.create_task(
+                                self._tts.synthesize(sentence, **ref_kwargs)
+                            )
+                    normalized_response = normalize_speech_text(
+                        strip_style_for_history(full_speech)
+                    )
+                    if normalized_response is None:
+                        raise RuntimeError("LLM returned an empty response")
+                    if self._jev is not None:
+                        history = [dict(item) for item in conversation.get_messages()]
+                        jev_task = asyncio.create_task(
+                            self._jev.ask_messages(history, normalized_response)
                         )
-                if pending_audio is not None:
-                    yield await self._audio_event(pending_audio)
-                normalized_response = normalize_speech_text(
-                    strip_style_for_history(full_speech)
-                )
-                if normalized_response is None:
-                    raise RuntimeError("LLM returned an empty response")
+                    if pending_audio is not None:
+                        yield await self._audio_event(pending_audio)
+                        pending_audio = None
+                    if jev_task is not None:
+                        try:
+                            jev_decision = await jev_task
+                        except Exception:
+                            jev_decision = None
+                        jev_task = None
+                else:
+                    await self._cancel_audio(pending_audio)
+                    pending_audio = None
             except asyncio.CancelledError:
+                if jev_task is not None:
+                    jev_task.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await jev_task
                 await self._cancel_audio(pending_audio)
                 raise
             except Exception as exc:
+                if jev_task is not None:
+                    jev_task.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await jev_task
                 await self._cancel_audio(pending_audio)
                 yield {"type": "error", "message": str(exc)}
                 return
 
+            if interrupted:
+                # 「已播出」的工程近似 = 已作为 sentence 事件送出的句子；
+                # 末句音频可能尚未送达即被让路，历史按半截台词记
+                partial = normalize_speech_text("".join(spoken))
+                if partial is not None:
+                    conversation.add_assistant_message(partial)
+                    committed = True
+                yield {"type": "interrupted"}
+                return
+
             conversation.add_assistant_message(normalized_response)
             committed = True
+            if jev_decision is not None:
+                yield jev_decision.as_event()
             yield {"type": "done"}
         finally:
             if not committed:
@@ -208,27 +312,21 @@ def _default_service(config: AppConfig | None = None) -> WebChatService:
             api_key=config.llm.api_key,
             base_url=config.llm.base_url,
             model=config.llm.model,
-            protocol=config.llm.protocol,
             temperature=config.llm.temperature,
             max_tokens=config.llm.max_tokens,
-            frequency_penalty=config.llm.frequency_penalty,
         ),
-        TTSClient(
-            base_url=config.tts.base_url,
-            ref_audio_path=config.tts.ref_audio_path,
-            ref_text=config.tts.ref_text,
-            ref_language=config.tts.ref_language,
-            text_language=config.tts.text_language,
-            top_k=config.tts.top_k,
-            top_p=config.tts.top_p,
-            temperature=config.tts.temperature,
-            repetition_penalty=config.tts.repetition_penalty,
-            speed_factor=config.tts.speed_factor,
-            seed=config.tts.seed,
-            text_split_method=config.tts.text_split_method,
-        ),
+        TTSClient(base_url=config.tts.base_url, timeout=config.tts.timeout),
         max_chars=config.max_sentence_chars,
         min_chars=config.min_sentence_chars,
+        jev_client=JevClient(
+            enabled=config.jev.enabled,
+            base_url=config.jev.base_url,
+            api_key=config.jev.api_key,
+            model=config.jev.model,
+            timeout_seconds=config.jev.timeout_seconds,
+            min_confidence=config.jev.min_confidence,
+            fail_cooldown_seconds=config.jev.fail_cooldown_seconds,
+        ),
     )
 
 
@@ -247,7 +345,7 @@ def create_app(
     """Create the FastAPI app and keep configuration/model loading explicit."""
     try:
         from fastapi import FastAPI, Request
-        from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+        from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError as exc:
         raise RuntimeError(
@@ -287,6 +385,13 @@ def create_app(
     app = FastAPI(title="AI 花音", version="0.1.0", lifespan=lifespan)
     if WEB_ASSETS_DIR.is_dir():
         app.mount("/assets", StaticFiles(directory=WEB_ASSETS_DIR), name="assets")
+    live2d_root = DEFAULT_LIVE2D_ROOT
+    live2d_model_dir = ""
+    if runtime_config is not None:
+        live2d_model_dir = runtime_config.live2d.model_dir
+    live2d_status = assess(live2d_root, live2d_model_dir)
+    if live2d_root.is_dir():
+        app.mount("/live2d", StaticFiles(directory=live2d_root), name="live2d")
     sessions: dict[str, _SessionState] = {}
 
     def evict_oldest_idle_session() -> bool:
@@ -340,6 +445,16 @@ def create_app(
             return HTMLResponse(WEB_HINT_HTML, status_code=503)
         return page.read_text(encoding="utf-8")
 
+    @app.get("/api/live2d")
+    async def live2d_manifest():
+        if not live2d_status.ready or live2d_status.model_url is None:
+            return JSONResponse({"ready": False}, status_code=404)
+        return {
+            "ready": True,
+            "model_url": live2d_status.model_url,
+            "core_url": live2d_status.core_url,
+        }
+
     @app.get("/healthz")
     async def healthz():
         tts_available = None
@@ -354,14 +469,13 @@ def create_app(
                 tts_available = True
         return {
             "status": "ok",
-            "service": "ai-huayin-web",
+            "service": "omokage",
             "llm_configured": bool(
                 runtime_config
                 and _is_configured(runtime_config.llm.api_key, "sk-your-deepseek-api-key")
             ),
             "tts_configured": bool(
-                runtime_config
-                and _is_configured(runtime_config.tts.ref_text, "在这里填写参考音频对应的文字内容")
+                runtime_config and runtime_config.tts.base_url
             ),
             "tts_available": tts_available,
             "asr_configured": speech_transcriber is not None,
@@ -369,7 +483,35 @@ def create_app(
                 speech_transcriber
                 and getattr(speech_transcriber, "available", True)
             ),
+            "live2d_ready": live2d_status.ready,
+            "jev_configured": bool(
+                runtime_config
+                and runtime_config.jev.enabled
+                and _is_configured(runtime_config.jev.api_key, "")
+            ),
         }
+
+    @app.post("/tts")
+    async def tts(request: Request):
+        """Locked-voice synthesis: body is ``{"text": "..."}`` only."""
+        tts_client = getattr(chat_service, "_tts", None)
+        synthesize = getattr(tts_client, "synthesize", None)
+        if not callable(synthesize):
+            return JSONResponse({"error": "TTS is not configured"}, status_code=503)
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("JSON object required")
+            text = parse_tts_request(payload)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        try:
+            audio = await synthesize(text)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        return Response(content=audio, media_type="audio/wav")
 
     @app.post("/api/chat")
     async def chat(request: Request):
@@ -388,7 +530,7 @@ def create_app(
             try:
                 async with session.lock:
                     async for event in chat_service.stream(
-                        message, session.conversation
+                        message, session.conversation, interrupt=session.interrupt
                     ):
                         yield sse_event(event)
             finally:
@@ -404,6 +546,22 @@ def create_app(
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @app.post("/api/interrupt")
+    async def interrupt(request: Request):
+        """让路：用户开口/点击时停掉该会话正在说的话。
+
+        不抢会话锁（否则会排在她后面）；没人在说话就当无事发生。
+        """
+        try:
+            payload = await request.json()
+            session_id = parse_session_id(payload)
+        except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        session = sessions.get(session_id)
+        if session is not None and session.lock.locked():
+            session.interrupt.set()
+        return {"status": "ok"}
 
     @app.post("/api/transcribe")
     async def transcribe_audio(request: Request, language: str | None = None):
@@ -459,8 +617,7 @@ def create_app(
     async def reset(request: Request):
         try:
             payload = await request.json()
-            session_id = payload.get("session_id", "default")
-            _, session_id = parse_chat_request({"message": "placeholder", "session_id": session_id})
+            session_id = parse_session_id(payload)
         except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         session = sessions.get(session_id)

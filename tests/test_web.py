@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from dialogue.conversation import Conversation
+from dialogue.performance import from_jev_choice
 from frontend.web import WebChatService, create_app, parse_chat_request, sse_event
 
 
@@ -19,7 +20,7 @@ def _async_iter(tokens):
 
 
 class FakeService:
-    async def stream(self, message, conversation):
+    async def stream(self, message, conversation, *, interrupt=None):
         yield {"type": "sentence", "text": f"收到：{message}"}
         yield {"type": "done"}
 
@@ -35,16 +36,19 @@ async def test_web_chat_streams_text_and_audio_events_in_order():
     events = [event async for event in service.stream("hello", Conversation())]
 
     assert [event["type"] for event in events] == [
+        "performance",
         "sentence",
         "audio",
         "sentence",
         "audio",
         "done",
     ]
-    assert events[0]["text"] == "你好呀。"
-    assert base64.b64decode(events[1]["audio"]) == b"wav-one"
-    assert events[2]["text"] == "今天也要加油！"
-    assert base64.b64decode(events[3]["audio"]) == b"wav-two"
+    assert events[0]["emotion"] == "日常"
+    assert events[0]["source"] == "speaking_style"
+    assert events[1]["text"] == "你好呀。"
+    assert base64.b64decode(events[2]["audio"]) == b"wav-one"
+    assert events[3]["text"] == "今天也要加油！"
+    assert base64.b64decode(events[4]["audio"]) == b"wav-two"
 
 
 @pytest.mark.asyncio
@@ -78,11 +82,12 @@ async def test_web_tts_failure_emits_error_but_completes_text_stream():
     ]
 
     assert [event["type"] for event in events] == [
+        "performance",
         "sentence",
         "audio_error",
         "done",
     ]
-    assert events[0]["text"] == "回复。继续。"
+    assert events[1]["text"] == "回复。继续。"
     assert conversation.get_messages()[-1] == {
         "role": "assistant",
         "content": "回复。继续。",
@@ -120,14 +125,87 @@ async def test_web_filters_stage_directions_before_text_and_audio():
         async for event in WebChatService(llm, tts).stream("你好", conversation)
     ]
 
-    assert [event["type"] for event in events] == ["sentence", "audio", "done"]
-    assert events[0]["text"] == "见到你真开心！"
+    assert [event["type"] for event in events] == [
+        "performance",
+        "sentence",
+        "audio",
+        "done",
+    ]
+    assert events[1]["text"] == "见到你真开心！"
+    assert "说话语气" not in events[1]["text"]
     tts.synthesize.assert_awaited_once()
     assert tts.synthesize.await_args.args == ("见到你真开心！",)
     assert conversation.get_messages()[-1] == {
         "role": "assistant",
         "content": "见到你真开心！",
     }
+
+
+class _FakeJev:
+    def __init__(self, decision):
+        self.decision = decision
+        self.calls = []
+
+    async def ask_messages(self, messages, assistant_text):
+        self.calls.append((messages, assistant_text))
+        return self.decision
+
+
+@pytest.mark.asyncio
+async def test_web_performance_follows_style_then_jev_without_showing_the_tag():
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(
+        return_value=_async_iter(["【说话语气:元气】", "早好音。"])
+    )
+    tts = AsyncMock()
+    tts.synthesize = AsyncMock(return_value=b"wav")
+    jev = _FakeJev(from_jev_choice("温柔", "mild", 0.9, min_confidence=0.4))
+    conversation = Conversation()
+
+    events = [
+        event
+        async for event in WebChatService(llm, tts, jev_client=jev).stream(
+            "早上好", conversation
+        )
+    ]
+
+    performances = [event for event in events if event["type"] == "performance"]
+    sentences = [event["text"] for event in events if event["type"] == "sentence"]
+    assert performances[0]["emotion"] == "元气"
+    assert performances[0]["source"] == "speaking_style"
+    assert performances[-1]["emotion"] == "温柔"
+    assert performances[-1]["source"] == "jev"
+    assert sentences == ["早好音。"]
+    assert "说话语气" not in "".join(sentences)
+    assert events[-1]["type"] == "done"
+    assert jev.calls and "说话语气" not in jev.calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_web_jev_failure_still_finishes_the_reply():
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(return_value=_async_iter(["在的。"]))
+    tts = AsyncMock()
+    tts.synthesize = AsyncMock(return_value=b"wav")
+
+    class _DownJev:
+        async def ask_messages(self, messages, assistant_text):
+            raise RuntimeError("jev down")
+
+    events = [
+        event
+        async for event in WebChatService(llm, tts, jev_client=_DownJev()).stream(
+            "在吗", Conversation()
+        )
+    ]
+
+    assert [event["type"] for event in events] == [
+        "performance",
+        "sentence",
+        "audio",
+        "done",
+    ]
+    assert events[-1] == {"type": "done"}
 
 
 def test_parse_chat_request_rejects_empty_or_oversized_messages():
@@ -158,13 +236,32 @@ def test_create_app_serves_ui_health_and_streaming_chat():
             assert filename.endswith(".webm")
             return {"text": "浏览器语音", "language": "zh"}
 
-    client = TestClient(create_app(FakeService(), transcriber=FakeTranscriber()))
+    class FakeTTS:
+        async def synthesize(self, text):
+            assert text == "你好"
+            return b"RIFF-locked-voice"
+
+        async def check_available(self):
+            return None
+
+    class ServiceWithTTS(FakeService):
+        def __init__(self):
+            self._tts = FakeTTS()
+
+    client = TestClient(
+        create_app(ServiceWithTTS(), transcriber=FakeTranscriber())
+    )
     health = client.get("/healthz")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
     assert health.json()["llm_configured"] is False
     assert health.json()["asr_configured"] is True
-    assert health.json()["tts_available"] is None
+    assert health.json()["tts_available"] is True
+
+    tts = client.post("/tts", json={"text": "你好", "speaker_id": 3})
+    assert tts.status_code == 200
+    assert tts.content == b"RIFF-locked-voice"
+    assert tts.headers["content-type"].startswith("audio/wav")
 
     response = client.post(
         "/api/chat",
@@ -215,7 +312,7 @@ async def test_same_session_chat_requests_are_serialized():
             self.release_first = asyncio.Event()
             self.conversation = None
 
-        async def stream(self, message, conversation):
+        async def stream(self, message, conversation, *, interrupt=None):
             self.active += 1
             self.max_active = max(self.max_active, self.active)
             self.entered.append(message)
@@ -273,7 +370,7 @@ async def test_reset_waits_for_an_active_chat_in_the_same_session():
             self.release = asyncio.Event()
             self.conversation = None
 
-        async def stream(self, message, conversation):
+        async def stream(self, message, conversation, *, interrupt=None):
             self.conversation = conversation
             conversation.add_user_message(message)
             self.entered.set()
@@ -316,7 +413,7 @@ async def test_session_limit_does_not_evict_an_active_conversation():
             self.release_first = asyncio.Event()
             self.conversations = {}
 
-        async def stream(self, message, conversation):
+        async def stream(self, message, conversation, *, interrupt=None):
             self.conversations[message] = conversation
             if message == "first":
                 self.first_started.set()
@@ -367,6 +464,200 @@ async def test_session_limit_does_not_evict_an_active_conversation():
 
 
 @pytest.mark.asyncio
+async def test_web_motion_events_precede_sentences_and_stay_out_of_text():
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(
+        return_value=_async_iter(
+            [
+                "【说话语气:元气】【动作:点头】早好音。",
+                "【动作:点头】又一句。",
+                "【动作:歪头】歪一下。",
+            ]
+        )
+    )
+    tts = AsyncMock()
+    tts.synthesize = AsyncMock(side_effect=[b"wav-one", b"wav-two", b"wav-three"])
+    conversation = Conversation()
+
+    events = [
+        event
+        async for event in WebChatService(llm, tts).stream("早上好", conversation)
+    ]
+
+    types = [event["type"] for event in events]
+    motions = [event["motion"] for event in events if event["type"] == "motion"]
+    sentences = [event["text"] for event in events if event["type"] == "sentence"]
+
+    # 相邻同词（点头+点头）被丢弃；第三个动作（歪头）放行
+    assert motions == ["点头", "歪头"]
+    assert sentences == ["早好音。", "又一句。", "歪一下。"]
+    for text in sentences:
+        assert "动作" not in text
+    # 每个动作事件都紧贴它修饰的句子之前
+    assert types.index("motion") < types.index("sentence")
+    assert types[-1] == "done"
+    assert tts.synthesize.await_args_list[0].args == ("早好音。",)
+    assert conversation.get_messages()[-1]["content"] == "早好音。又一句。歪一下。"
+
+
+@pytest.mark.asyncio
+async def test_web_motion_over_limit_silently_dropped_but_tags_stripped():
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(
+        return_value=_async_iter(
+            [
+                "【动作:点头】一。",
+                "【动作:摇头】二。",
+                "【动作:歪头】三。",
+            ]
+        )
+    )
+    tts = AsyncMock()
+    tts.synthesize = AsyncMock(return_value=b"wav")
+    conversation = Conversation()
+
+    events = [
+        event
+        async for event in WebChatService(llm, tts).stream("嗨", conversation)
+    ]
+
+    motions = [event["motion"] for event in events if event["type"] == "motion"]
+    sentences = [event["text"] for event in events if event["type"] == "sentence"]
+    assert motions == ["点头", "摇头"]  # 第三个超出「一轮至多 2 个」
+    assert sentences == ["一。", "二。", "三。"]
+
+
+@pytest.mark.asyncio
+async def test_web_interrupt_commits_spoken_part_and_ends_with_interrupted():
+    release = asyncio.Event()
+    interrupt = asyncio.Event()
+
+    async def slow_llm():
+        yield "第一句话。"
+        await release.wait()
+        yield "第二句话。"
+
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(return_value=slow_llm())
+    tts = AsyncMock()
+    tts.synthesize = AsyncMock(return_value=b"wav")
+    conversation = Conversation()
+
+    stream = WebChatService(llm, tts).stream("问题", conversation, interrupt=interrupt)
+    first = await anext(stream)
+    assert first["type"] == "performance"
+    second = await anext(stream)
+    assert second == {"type": "sentence", "text": "第一句话。"}
+
+    interrupt.set()
+    release.set()
+    rest = [event async for event in stream]
+
+    # 让路：未送达的音频取消，不再有 audio/done，收尾是 interrupted
+    assert rest == [{"type": "interrupted"}]
+    assert conversation.get_messages() == [
+        {"role": "user", "content": "问题"},
+        {"role": "assistant", "content": "第一句话。"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_web_interrupt_before_anything_spoken_rolls_back():
+    release = asyncio.Event()
+    interrupt = asyncio.Event()
+
+    async def slow_llm():
+        await release.wait()
+        yield "太慢了。"
+
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(return_value=slow_llm())
+    tts = AsyncMock()
+    conversation = Conversation()
+
+    async def collect():
+        return [event async for event in WebChatService(llm, tts).stream(
+            "问题", conversation, interrupt=interrupt
+        )]
+
+    consumer = asyncio.create_task(collect())
+    await asyncio.sleep(0.05)  # 已进入 token 循环、还什么都没说
+    interrupt.set()
+    release.set()
+    rest = await asyncio.wait_for(consumer, timeout=1)
+
+    assert rest == [{"type": "interrupted"}]
+    assert conversation.get_messages() == []
+
+
+@pytest.mark.asyncio
+async def test_web_stale_interrupt_flag_is_cleared_at_turn_start():
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(return_value=_async_iter(["正常回复。"]))
+    tts = AsyncMock()
+    tts.synthesize = AsyncMock(return_value=b"wav")
+    interrupt = asyncio.Event()
+    interrupt.set()  # 上一轮残留的让路信号
+    conversation = Conversation()
+
+    events = [
+        event
+        async for event in WebChatService(llm, tts).stream("问题", conversation, interrupt=interrupt)
+    ]
+
+    assert events[-1] == {"type": "done"}
+    assert conversation.get_messages()[-1]["content"] == "正常回复。"
+
+
+@pytest.mark.asyncio
+async def test_interrupt_endpoint_stops_active_stream_via_http():
+    class SlowService:
+        def __init__(self):
+            self.first_sentence = asyncio.Event()
+            self.release = asyncio.Event()
+            self.conversation = None
+
+        async def stream(self, message, conversation, *, interrupt=None):
+            self.conversation = conversation
+            conversation.add_user_message(message)
+            yield {"type": "sentence", "text": "第一句。"}
+            self.first_sentence.set()
+            while interrupt is None or not interrupt.is_set():
+                await asyncio.sleep(0.01)
+            conversation.add_assistant_message("第一句。")
+            yield {"type": "interrupted"}
+
+    service = SlowService()
+    transport = httpx.ASGITransport(app=create_app(service))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        chat = asyncio.create_task(
+            client.post(
+                "/api/chat",
+                json={"message": "你好", "session_id": "s"},
+            )
+        )
+        await asyncio.wait_for(service.first_sentence.wait(), timeout=1)
+
+        unknown = await client.post(
+            "/api/interrupt", json={"session_id": "not-exist"}
+        )
+        assert unknown.status_code == 200
+
+        hit = await client.post("/api/interrupt", json={"session_id": "s"})
+        assert hit.status_code == 200
+        response = await asyncio.wait_for(chat, timeout=1)
+
+    assert response.status_code == 200
+    assert '"type": "interrupted"' in response.text
+    assert service.conversation.get_messages() == [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "第一句。"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_closing_web_stream_mid_response_rolls_back_pending_user():
     llm = AsyncMock()
     llm.stream_chat = MagicMock(
@@ -376,6 +667,7 @@ async def test_closing_web_stream_mid_response_rolls_back_pending_user():
     conversation = Conversation()
 
     stream = WebChatService(llm, tts).stream("问题", conversation)
+    assert (await anext(stream))["type"] == "performance"
     assert await anext(stream) == {"type": "sentence", "text": "第一句话。"}
     await stream.aclose()
 
@@ -417,27 +709,25 @@ def test_frontend_src_references_api_paths():
         path.read_text(encoding="utf-8")
         for path in sorted(src_root.rglob("*.ts")) + sorted(src_root.rglob("*.tsx"))
     )
-    for endpoint in ("/api/chat", "/api/transcribe", "/api/reset", "/healthz"):
+    for endpoint in ("/api/chat", "/api/transcribe", "/api/reset", "/api/interrupt", "/healthz"):
         assert endpoint in sources, f"前端源码未引用 {endpoint}"
 
 
-def _config_yaml(protocol: str = "anthropic") -> str:
-    return f"""
+def _config_yaml() -> str:
+    return """
 llm:
   api_key: key
   base_url: https://example.test
   model: model
-  protocol: {protocol}
 tts:
-  base_url: http://localhost:9880
-  ref_audio_path: /ref.wav
-  ref_text: ref
-  ref_language: zh
+  base_url: http://localhost:5000
 """
 
 
 @pytest.mark.asyncio
-async def test_default_service_passes_llm_protocol_from_config(tmp_path):
+async def test_default_service_passes_llm_settings_from_config(tmp_path):
+    from openai import AsyncOpenAI
+
     from config import load_config
     from dialogue.llm_client import LLMClient
     from frontend.web import _default_service
@@ -448,20 +738,24 @@ async def test_default_service_passes_llm_protocol_from_config(tmp_path):
     service = _default_service(load_config(str(path)))
 
     assert isinstance(service._llm, LLMClient)
-    assert service._llm._protocol == "anthropic"
-    assert isinstance(service._llm._client, httpx.AsyncClient)
+    assert service._llm._model == "model"
+    assert service._llm._temperature == 0.8
+    assert service._llm._max_tokens == 400
+    assert isinstance(service._llm._client, AsyncOpenAI)
     await service._llm.aclose()
 
 
-def test_cli_passes_llm_protocol_from_config():
+def test_cli_does_not_pass_legacy_protocol():
     cli_path = Path(__file__).resolve().parents[1] / "frontend" / "cli.py"
     source = cli_path.read_text(encoding="utf-8")
-    assert "protocol=config.llm.protocol" in source
+    assert "protocol=" not in source
+    assert "frequency_penalty" not in source
 
 
 def test_create_app_lifespan_closes_llm_client(tmp_path):
     fastapi = pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
+    from openai import AsyncOpenAI
 
     from config import load_config
     from frontend.web import _default_service, create_app
@@ -470,10 +764,10 @@ def test_create_app_lifespan_closes_llm_client(tmp_path):
     path.write_text(_config_yaml(), encoding="utf-8")
     service = _default_service(load_config(str(path)))
     client = service._llm._client
-    assert isinstance(client, httpx.AsyncClient)
-    assert client.is_closed is False
+    assert isinstance(client, AsyncOpenAI)
+    assert client.is_closed() is False
 
     with TestClient(create_app(service)) as test_client:
         assert test_client.get("/healthz").status_code == 200
 
-    assert client.is_closed is True
+    assert client.is_closed() is True

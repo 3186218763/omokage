@@ -1,0 +1,17 @@
+{
+  "mouth_open": "ParamMouthOpenY",
+  "mouth_form": "ParamMouthForm",
+  "eye_open_l": "ParamEyeLOpen",
+  "eye_open_r": "ParamEyeROpen",
+  "eye_smile_l": "ParamEyeLSmile",
+  "eye_smile_r": "ParamEyeRSmile",
+  "brow_y_l": "ParamBrowLY",
+  "brow_y_r": "ParamBrowRY",
+  "brow_angle_l": "ParamBrowLAngle",
+  "brow_angle_r": "ParamBrowRAngle",
+  "angle_x": "ParamAngleX",
+  "angle_y": "ParamAngleY",
+  "angle_z": "ParamAngleZ",
+  "body_angle_x": "ParamBodyAngleX",
+  "body_angle_z": "ParamBodyAngleZ"
+}

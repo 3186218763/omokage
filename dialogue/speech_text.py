@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from .motion import strip_motion_tags
 from .speaking_style import strip_speaking_style_prefix
 
 
 def strip_style_for_history(text: str) -> str:
-    """Remove leading speaking-style control tags before history save."""
-    return strip_speaking_style_prefix(text)
+    """Remove speaking-style and motion control tags before history save."""
+    return strip_motion_tags(strip_speaking_style_prefix(text))
 
 
 _CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```|~~~[\s\S]*?~~~")

@@ -1,7 +1,7 @@
 [project]
-name = "ai-huayin-tts"
+name = "omokage"
 version = "0.1.0"
-description = "AI 真白花音 TTS 交互对话系统"
+description = "omokage：虚拟人物重现（当前为真白花音；声线层为 Style-Bert-VITS2）"
 requires-python = ">=3.11"
 dependencies = [
     "openai>=1.0",
@@ -31,7 +31,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["dialogue*", "frontend*"]
+include = ["dialogue*", "frontend*", "scripts*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

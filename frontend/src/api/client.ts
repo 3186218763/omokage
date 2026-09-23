@@ -13,7 +13,16 @@ function isChatEvent(value: unknown): value is ChatEvent {
     case "error":
       return typeof v.message === "string";
     case "done":
+    case "interrupted":
       return true;
+    case "motion":
+      return typeof v.motion === "string";
+    case "performance":
+      return typeof v.emotion === "string"
+        && typeof v.intensity === "number"
+        && typeof v.confidence === "number"
+        && (v.source === "speaking_style" || v.source === "jev")
+        && typeof v.decay_ms === "number";
     default:
       return false;
   }
@@ -71,6 +80,15 @@ export async function transcribeAudio(blob: Blob): Promise<string> {
 
 export async function resetSession(sessionId: string): Promise<void> {
   await fetch("/api/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+}
+
+/** 让路：请后端停掉该会话正在说的这轮话。没人在说也无害。 */
+export async function interruptSession(sessionId: string): Promise<void> {
+  await fetch("/api/interrupt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId }),

@@ -16,30 +16,21 @@ from config import load_config
 
 def generate_reply(user_text: str, config) -> str:
     client = OpenAI(api_key=config.llm.api_key, base_url=config.llm.base_url)
-    response = client.chat.completions.create(
+    response = client.responses.create(
         model=config.llm.model,
-        messages=[
+        input=[
             {"role": "system", "content": "你是真白花音，一位可爱的虚拟歌手。用简短活泼的语气回复，1-2句话。"},
             {"role": "user", "content": user_text},
         ],
     )
-    return response.choices[0].message.content
+    return response.output_text
 
 
 def synthesize_speech(text: str, config) -> bytes:
     response = httpx.post(
         f"{config.tts.base_url}/tts",
-        json={
-            "text": text,
-            "text_lang": "auto",
-            "ref_audio_path": config.tts.ref_audio_path,
-            "prompt_text": config.tts.ref_text,
-            "prompt_lang": config.tts.ref_language,
-            "text_split_method": "cut0",
-            "media_type": "wav",
-            "streaming_mode": False,
-        },
-        timeout=60.0,
+        json={"text": text},
+        timeout=config.tts.timeout,
     )
     response.raise_for_status()
     return response.content

@@ -50,7 +50,7 @@ fi
 
 tmux new-session -d -s "$SESSION" -n consensus "bash -lc '
 set -uo pipefail
-cd /home/mtr/tt/tts
+cd /home/mtr/tt/omokage
 mkdir -p logs
 export PYTHONUNBUFFERED=1
 export CUDA_DEVICE_ORDER=PCI_BUS_ID

@@ -1,17 +1,19 @@
-# Huayin 交付权重
+# Huayin 交付权重（Style-Bert-VITS2）
 
-**配方：** [`configs/huayin_precision.yaml`](../configs/huayin_precision.yaml)
+**配方：** [`configs/huayin_sbv2.yaml`](../configs/huayin_sbv2.yaml)
 
-| 文件 | 角色 | 说明 |
-|------|------|------|
-| `huayin-gpt.ckpt` | S1 语义模型 | 验证最优（原 e5，val top3 acc 0.250） |
-| `huayin-sovits.pth` | S2 声学模型 | 音色（原 e12 终盘） |
-| `huayin-ref.wav` | 参考音频 | 默认「日常」说话语气主 ref |
-| `refs/` | 多说话语气参考音库 | 见 `refs/speaking_style_refs.json`（日常/元气/温柔/俏皮/倔强/惊讶） |
+训练完成后，推理资产在 Style-Bert-VITS2 的 `model_assets/huayin/`：
+
+| 文件 | 角色 |
+|------|------|
+| `config.json` | 超参与 `spk2id` |
+| `*.safetensors` | 声学模型 |
+| `style_vectors.npy` | 默认风格向量（Neutral） |
+
+本目录保留参考音（对话层说话语气库），**不再**存放 GPT-SoVITS 的 `.ckpt` / `.pth`。
 
 ```bash
-python scripts/run_huayin_api.py --python /home/mtr/miniconda3/envs/gptsovits/bin/python
+python scripts/export_sbv2_dataset.py
+python scripts/run_sbv2_api.py
 python scripts/test_huayin_tts.py "你好，今天也要加油。"
 ```
-
-运行时仍依赖 `/home/mtr/tt/GPT-SoVITS` 与官方 `pretrained_models/`。

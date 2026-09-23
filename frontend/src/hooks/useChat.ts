@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../types";
-import { fetchHealth, resetSession, streamChat } from "../api/client";
+import { fetchHealth, interruptSession, resetSession, streamChat } from "../api/client";
 import type { QueueItem } from "./useAudioQueue";
 
 export type Status =
@@ -18,6 +18,7 @@ export type Status =
 
 export interface UseChatOptions {
   enqueueAudio: (item: QueueItem) => void;
+  onPerformance?: (event: Extract<import("../types").ChatEvent, { type: "performance" }>) => void;
 }
 
 const SESSION_KEY = "huayin-session-id";
@@ -36,7 +37,7 @@ function loadSessionId(): string {
   return created;
 }
 
-export function useChat({ enqueueAudio }: UseChatOptions) {
+export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Status>("online");
@@ -44,9 +45,9 @@ export function useChat({ enqueueAudio }: UseChatOptions) {
 
   const sessionIdRef = useRef(loadSessionId());
   const busyRef = useRef(false);
+  const interruptRef = useRef(false);
+  const pendingMotionRef = useRef<string | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const nearBottomRef = useRef(true);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -65,30 +66,20 @@ export function useChat({ enqueueAudio }: UseChatOptions) {
       .catch(() => {});
   }, []);
 
-  const onListScroll = useCallback(() => {
-    const el = listRef.current;
-    if (!el) return;
-    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  }, []);
-
-  // 新消息自动滚底；用户上翻浏览历史时不强制拉回
-  useEffect(() => {
-    if (!nearBottomRef.current) return;
-    const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
-
   const send = useCallback(
     async (raw: string) => {
       const message = raw.trim();
       if (!message || busyRef.current) return;
       busyRef.current = true;
+      interruptRef.current = false;
+      pendingMotionRef.current = null;
       setBusy(true);
       setStatus("generating");
       const userMessage: ChatMessage = {
         id: newId(),
         role: "user",
         text: message,
+        sentences: [],
         audio: [],
       };
       const assistantId = newId();
@@ -96,6 +87,7 @@ export function useChat({ enqueueAudio }: UseChatOptions) {
         id: assistantId,
         role: "assistant",
         text: "",
+        sentences: [],
         audio: [],
       };
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
@@ -104,14 +96,21 @@ export function useChat({ enqueueAudio }: UseChatOptions) {
           if (event.type === "sentence") {
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === assistantId ? { ...m, text: m.text + event.text } : m,
+                m.id === assistantId
+                  ? { ...m, text: m.text + event.text, sentences: [...m.sentences, event.text] }
+                  : m,
               ),
             );
           } else if (event.type === "audio") {
+            // 已让路的轮：迟到的音频不再入队（淡出后再自动播放就穿帮了）
+            if (interruptRef.current) continue;
             const current = messagesRef.current.find((m) => m.id === assistantId);
             const index = current?.audio.length ?? 0;
             const url = `data:audio/wav;base64,${event.audio}`;
-            enqueueAudio({ key: `${assistantId}:${index}`, url });
+            // 动作不在事件到达时触发，而是搭在对应句的音频上，起播瞬间才动
+            const motion = pendingMotionRef.current ?? undefined;
+            pendingMotionRef.current = null;
+            enqueueAudio({ key: `${assistantId}:${index}`, url, motion });
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId ? { ...m, audio: [...m.audio, { url }] } : m,
@@ -125,6 +124,11 @@ export function useChat({ enqueueAudio }: UseChatOptions) {
                   : m,
               ),
             );
+          } else if (event.type === "performance") {
+            onPerformance?.(event);
+          } else if (event.type === "motion") {
+            // 暂存到下一块音频上；音频起播时由音频队列回调触发
+            pendingMotionRef.current = event.motion;
           } else if (event.type === "error") {
             throw new Error(event.message);
           }
@@ -138,6 +142,7 @@ export function useChat({ enqueueAudio }: UseChatOptions) {
               ? {
                   ...m,
                   text: m.text ? `${m.text}\n[${reason}]` : `请求失败：${reason}`,
+                  error: reason,
                 }
               : m,
           ),
@@ -148,13 +153,20 @@ export function useChat({ enqueueAudio }: UseChatOptions) {
         setBusy(false);
       }
     },
-    [enqueueAudio],
+    [enqueueAudio, onPerformance],
   );
+
+  /** 让路：请后端停掉正在说的这轮话；本轮后续音频不再入队。 */
+  const interrupt = useCallback(async () => {
+    if (!busyRef.current || interruptRef.current) return;
+    interruptRef.current = true;
+    await interruptSession(sessionIdRef.current).catch(() => {});
+  }, []);
 
   const reset = useCallback(async () => {
     await resetSession(sessionIdRef.current).catch(() => {});
     setMessages([]);
   }, []);
 
-  return { messages, busy, status, asrEnabled, send, reset, listRef, onListScroll };
+  return { messages, busy, status, asrEnabled, send, interrupt, reset };
 }

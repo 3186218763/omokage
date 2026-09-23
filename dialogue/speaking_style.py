@@ -26,7 +26,7 @@ _DEFAULT_BANK = Path(__file__).resolve().parent.parent / "model" / "refs" / "spe
 
 @dataclass(frozen=True)
 class ReferenceClip:
-    """一条 GPT-SoVITS 参考音（路径 + 转写）。"""
+    """一条说话语气参考音（路径 + 转写）。TTS 引擎锁定花音声线后仅作兼容保留。"""
 
     style: str
     audio_path: str

@@ -264,9 +264,9 @@ Aligned with memorial VTuber dialogue and `CONTEXT.md` wording:
 23. F5-TTS official repo — https://github.com/SWivid/F5-TTS  
 24. StyleTTS2 official repo — https://github.com/yl4579/StyleTTS2  
 25. OpenVoice official repo — https://github.com/myshell-ai/OpenVoice  
-26. Project domain language — `/home/mtr/tt/tts/CONTEXT.md`  
-27. Project TTS client contract — `/home/mtr/tt/tts/dialogue/tts_client.py`  
-28. Precision dataset scale (~1179 ZH clips) — `/home/mtr/tt/tts/data/dataset_precision/README.md`
+26. Project domain language — `/home/mtr/tt/omokage/CONTEXT.md`  
+27. Project TTS client contract — `/home/mtr/tt/omokage/dialogue/tts_client.py`  
+28. Precision dataset scale (~1179 ZH clips) — `/home/mtr/tt/omokage/data/dataset_precision/README.md`
 
 ---
 

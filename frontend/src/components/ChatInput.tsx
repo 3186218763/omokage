@@ -31,15 +31,23 @@ export function ChatInput({ busy, asrEnabled, recording, onSend, onToggleRecord 
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   };
 
+  const micLabel = !asrEnabled
+    ? "语音模型未安装"
+    : recording
+      ? "停止录音"
+      : busy
+        ? "让她停下，听你说"
+        : "开始录音";
+
   return (
     <div className={styles.bar}>
       <button
         type="button"
         className={`${styles.mic} ${recording ? styles.recording : ""}`}
         onClick={onToggleRecord}
-        disabled={!asrEnabled || busy}
-        title={!asrEnabled ? "语音模型未安装" : recording ? "停止录音" : "开始录音"}
-        aria-label={!asrEnabled ? "语音模型未安装" : recording ? "停止录音" : "开始录音"}
+        disabled={!asrEnabled}
+        title={micLabel}
+        aria-label={micLabel}
       >
         <span className={styles.dot} aria-hidden="true" />
       </button>
@@ -49,7 +57,7 @@ export function ChatInput({ busy, asrEnabled, recording, onSend, onToggleRecord 
           className={styles.field}
           value={text}
           maxLength={MAX_CHARS}
-          placeholder="输入消息...（Enter 发送，Shift+Enter 换行）"
+          placeholder="和她说点什么…（Enter 发送）"
           aria-label="消息"
           onChange={(event) => setText(event.target.value)}
           onInput={resize}

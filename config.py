@@ -3,37 +3,42 @@ from pathlib import Path
 import yaml
 
 
+_LLM_FIELDS = {"api_key", "base_url", "model", "temperature", "max_tokens"}
+_TTS_FIELDS = {
+    "base_url",
+    "model_name",
+    "speaker_name",
+    "style",
+    "style_weight",
+    "length",
+    "sdp_ratio",
+    "noise",
+    "noisew",
+    "timeout",
+}
+
+
 @dataclass
 class LLMConfig:
     api_key: str
     base_url: str
     model: str
-    protocol: str = "openai"
     temperature: float = 0.8
     max_tokens: int = 400
-    frequency_penalty: float = 0.15
-
-    def __post_init__(self):
-        if self.protocol not in ("openai", "anthropic"):
-            raise ValueError(
-                f"llm.protocol 必须是 openai 或 anthropic，当前为 {self.protocol!r}"
-            )
 
 
 @dataclass
 class TTSConfig:
     base_url: str
-    ref_audio_path: str
-    ref_text: str
-    ref_language: str
-    text_language: str = "auto"
-    top_k: int = 15
-    top_p: float = 1.0
-    temperature: float = 0.85
-    repetition_penalty: float = 1.35
-    speed_factor: float = 1.0
-    seed: int = 42
-    text_split_method: str = "cut5"
+    model_name: str = "huayin"
+    speaker_name: str = "花音"
+    style: str = "Neutral"
+    style_weight: float = 1.0
+    length: float = 1.0
+    sdp_ratio: float = 0.2
+    noise: float = 0.6
+    noisew: float = 0.8
+    timeout: float = 60.0
 
 
 @dataclass
@@ -47,6 +52,33 @@ class ASRConfig:
 
 
 @dataclass
+class JevConfig:
+    enabled: bool = False
+    base_url: str = "https://api.typesafe.ai"
+    api_key: str = ""
+    model: str = "jev-latest"
+    timeout_seconds: float = 2.0
+    min_confidence: float = 0.4
+    fail_cooldown_seconds: float = 60.0
+
+
+@dataclass
+class Live2DConfig:
+    model_dir: str = ""
+
+
+_JEV_FIELDS = {
+    "enabled",
+    "base_url",
+    "api_key",
+    "model",
+    "timeout_seconds",
+    "min_confidence",
+    "fail_cooldown_seconds",
+}
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig
     tts: TTSConfig
@@ -57,6 +89,8 @@ class AppConfig:
     min_sentence_chars: int = 4
     max_sentence_chars: int = 50
     asr: ASRConfig = field(default_factory=ASRConfig)
+    jev: JevConfig = field(default_factory=JevConfig)
+    live2d: Live2DConfig = field(default_factory=Live2DConfig)
 
 
 def load_config(path: str = "configs/config.yaml") -> AppConfig:
@@ -70,9 +104,15 @@ def load_config(path: str = "configs/config.yaml") -> AppConfig:
         data = yaml.safe_load(f)
     conversation = data.get("conversation", {})
     streaming = data.get("streaming", {})
+    jev_raw = data.get("jev") or {}
+    live2d_raw = data.get("live2d") or {}
     return AppConfig(
-        llm=LLMConfig(**data["llm"]),
-        tts=TTSConfig(**data["tts"]),
+        llm=LLMConfig(
+            **{key: value for key, value in data["llm"].items() if key in _LLM_FIELDS}
+        ),
+        tts=TTSConfig(
+            **{key: value for key, value in data["tts"].items() if key in _TTS_FIELDS}
+        ),
         asr=ASRConfig(**data.get("asr", {})),
         max_turns=conversation.get(
             "recent_turns", conversation.get("max_turns", 8)
@@ -82,4 +122,6 @@ def load_config(path: str = "configs/config.yaml") -> AppConfig:
         summary_max_chars=conversation.get("summary_max_chars", 1_800),
         min_sentence_chars=streaming.get("min_sentence_chars", 4),
         max_sentence_chars=streaming.get("max_sentence_chars", 50),
+        jev=JevConfig(**{key: value for key, value in jev_raw.items() if key in _JEV_FIELDS}),
+        live2d=Live2DConfig(model_dir=str(live2d_raw.get("model_dir") or "")),
     )

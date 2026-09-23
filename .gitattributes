@@ -1,2 +1,1 @@
-model/*.ckpt filter=lfs diff=lfs merge=lfs -text
-model/*.pth filter=lfs diff=lfs merge=lfs -text
+# 旧 GPT-SoVITS 权重已移除；SBV2 safetensors 不进本仓库。

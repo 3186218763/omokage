@@ -1,32 +1,22 @@
 llm:
-  api_key: "sk-your-deepseek-api-key"
-  # openai: OpenAI 兼容格式（默认）
-  # anthropic: Anthropic 原生协议，base_url 填 SDK 风格根地址（如 https://opencode.ai/zen/go，自动补 /v1/messages）
-  protocol: openai
-  base_url: "https://api.deepseek.com"
-  model: "deepseek-v4-flash"
+  api_key: "sk-your-api-key"
+  # OpenAI Responses API（/v1/responses）。base_url 填兼容网关根地址。
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-4.1-mini"
   # Voice-oriented replies should be concise and varied without becoming
   # unpredictable. Conversation summaries use a separate low temperature.
   temperature: 0.8
   max_tokens: 400
-  frequency_penalty: 0.15
 
 tts:
-  base_url: "http://127.0.0.1:9880"
-  # Use an absolute path because api_v2.py runs from the GPT-SoVITS directory.
-  # Full locked recipe (weights + train + infer): configs/huayin_precision.yaml
-  ref_audio_path: "/home/mtr/tt/tts/model/huayin-ref.wav"
-  ref_text: "所以和朋友一起吃饭的话比较好哦"
-  ref_language: "zh"
-  # Aligned with configs/huayin_precision.yaml inference (user-approved 2026-08-14).
-  text_language: "auto"
-  top_k: 15
-  top_p: 1.0
-  temperature: 1.0
-  repetition_penalty: 1.35
-  speed_factor: 1.0
-  seed: 42
-  text_split_method: "cut5"
+  # Locked Huayin Style-Bert-VITS2 API (POST /tts {"text": "..."}).
+  # Speaker / style / model are fixed on the server; the client only sends text.
+  base_url: "http://127.0.0.1:5000"
+  model_name: huayin
+  speaker_name: 花音
+  style: Neutral
+  length: 1.0
+  timeout: 60.0
 
 asr:
   model: "small"
@@ -46,3 +36,19 @@ conversation:
 streaming:
   min_sentence_chars: 4
   max_sentence_chars: 50
+
+# 表演情绪。未启用时脸跟说话语气走。
+# 本地 Kev：base_url 写到 /v1/systemone，密钥填任意非空字符串（服务未设 KEV_API_KEY 时会忽略）。
+# 启动：bash scripts/run_kev.sh
+jev:
+  enabled: false
+  base_url: "http://127.0.0.1:8009/v1/systemone"
+  api_key: "local"
+  model: "kev-latest"
+  timeout_seconds: 2.0
+  min_confidence: 0.4
+  fail_cooldown_seconds: 60
+
+# 空 model_dir：有 baicai 用 baicai，否则 hiyori。路径必须在 resources/live2d/ 内。
+live2d:
+  model_dir: ""

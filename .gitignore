@@ -7,11 +7,14 @@ venv/
 # 配置（含 API key）
 configs/config.yaml
 
-# 模型（交付权重走 LFS 例外跟踪）
+# 模型权重（SBV2 safetensors 在 Style-Bert-VITS2/model_assets，不入库）
 model/*.ckpt
 model/*.pth
-!model/huayin-gpt.ckpt
-!model/huayin-sovits.pth
+model/*.safetensors
+
+# Live2D Cubism Core 与模型（许可文件，人本地放置）
+resources/live2d/core/
+resources/live2d/models/
 # 数据本地保留，不推远程（训练/采集产物）
 data/
 
