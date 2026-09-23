@@ -197,7 +197,8 @@ async def test_synthesizes_next_sentence_while_previous_audio_is_playing():
 
 
 @pytest.mark.asyncio
-async def test_chat_injects_rolling_summary_before_recent_turns():
+async def test_chat_injects_rolling_summary_before_recent_turns(monkeypatch):
+    monkeypatch.setattr("dialogue.conversation._now_hhmm", lambda: "12:34")
     llm = AsyncMock()
     llm.summarize_chat = AsyncMock(return_value="用户叫小明，喜欢爵士乐。")
     llm.stream_chat = MagicMock(return_value=_async_iter(["当然记得。"]))
@@ -231,10 +232,11 @@ async def test_chat_injects_rolling_summary_before_recent_turns():
     )
     assert memory_index >= 2, "注入段应位于人设卡与记忆之间"
     assert all(message["role"] == "system" for message in messages[1:memory_index])
+    # 时间感知：近期原文带 [HH:MM] 前缀（历史存储仍是无前缀原文）
     assert [message["content"] for message in messages[memory_index + 1 :]] == [
-        "今天天气不错",
-        "很适合散步。",
-        "还记得我的爱好吗",
+        "[12:34] 今天天气不错",
+        "[12:34] 很适合散步。",
+        "[12:34] 还记得我的爱好吗",
     ]
 
 

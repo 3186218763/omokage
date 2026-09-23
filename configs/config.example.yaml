@@ -32,10 +32,15 @@ conversation:
   summary_trigger_turns: 12
   summary_trigger_chars: 12000
   summary_max_chars: 1800
+  # 轮末是否向前端发 timing 事件（每轮时延观测；前端不消费，debug 用）。
+  timing_event: true
 
 streaming:
   min_sentence_chars: 4
   max_sentence_chars: 50
+  # TTS 预取深度：每句事件先行、合成进按序队列，队列满才下发最旧音频。
+  # 1 = 旧行为（逐句串行）；2-3 = 预取，句间 gap 更小。上限 3（保护单卡 SBV2）。
+  tts_prefetch_depth: 2
 
 # 表演情绪。未启用时脸跟说话语气走。
 # 本地 Kev：base_url 写到 /v1/systemone，密钥填任意非空字符串（服务未设 KEV_API_KEY 时会忽略）。
@@ -50,5 +55,7 @@ jev:
   fail_cooldown_seconds: 60
 
 # 空 model_dir：有 baicai 用 baicai，否则 hiyori。路径必须在 resources/live2d/ 内。
+# 空 background：自动用 backgrounds/clubroom-day.jpg（无则按文件名排序取第一张）。路径同样必须在 resources/live2d/ 内。
 live2d:
   model_dir: ""
+  background: ""

@@ -3,6 +3,9 @@ from pathlib import Path
 import yaml
 
 
+# TTS 预取深度上限：保护单卡 SBV2 的并发合成（frontend.web 与本模块共用）
+MAX_TTS_PREFETCH_DEPTH = 3
+
 _LLM_FIELDS = {"api_key", "base_url", "model", "temperature", "max_tokens"}
 _TTS_FIELDS = {
     "base_url",
@@ -65,6 +68,7 @@ class JevConfig:
 @dataclass
 class Live2DConfig:
     model_dir: str = ""
+    background: str = ""
 
 
 _JEV_FIELDS = {
@@ -88,6 +92,8 @@ class AppConfig:
     summary_max_chars: int = 1_800
     min_sentence_chars: int = 4
     max_sentence_chars: int = 50
+    tts_prefetch_depth: int = 2
+    timing_event: bool = True
     asr: ASRConfig = field(default_factory=ASRConfig)
     jev: JevConfig = field(default_factory=JevConfig)
     live2d: Live2DConfig = field(default_factory=Live2DConfig)
@@ -106,6 +112,11 @@ def load_config(path: str = "configs/config.yaml") -> AppConfig:
     streaming = data.get("streaming", {})
     jev_raw = data.get("jev") or {}
     live2d_raw = data.get("live2d") or {}
+    tts_prefetch_depth = streaming.get("tts_prefetch_depth", 2)
+    if not 1 <= tts_prefetch_depth <= MAX_TTS_PREFETCH_DEPTH:
+        raise ValueError(
+            f"streaming.tts_prefetch_depth must be between 1 and {MAX_TTS_PREFETCH_DEPTH}"
+        )
     return AppConfig(
         llm=LLMConfig(
             **{key: value for key, value in data["llm"].items() if key in _LLM_FIELDS}
@@ -122,6 +133,11 @@ def load_config(path: str = "configs/config.yaml") -> AppConfig:
         summary_max_chars=conversation.get("summary_max_chars", 1_800),
         min_sentence_chars=streaming.get("min_sentence_chars", 4),
         max_sentence_chars=streaming.get("max_sentence_chars", 50),
+        tts_prefetch_depth=tts_prefetch_depth,
+        timing_event=conversation.get("timing_event", True),
         jev=JevConfig(**{key: value for key, value in jev_raw.items() if key in _JEV_FIELDS}),
-        live2d=Live2DConfig(model_dir=str(live2d_raw.get("model_dir") or "")),
+        live2d=Live2DConfig(
+            model_dir=str(live2d_raw.get("model_dir") or ""),
+            background=str(live2d_raw.get("background") or ""),
+        ),
     )

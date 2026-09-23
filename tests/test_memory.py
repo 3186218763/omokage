@@ -6,13 +6,18 @@ from dialogue.conversation import Conversation
 from dialogue.memory import compact_conversation, prepare_chat_messages
 
 
+def _time() -> str:
+    return "12:34"
+
+
 def add_turn(conversation: Conversation, index: int) -> None:
     conversation.add_user_message(f"user-{index}")
     conversation.add_assistant_message(f"assistant-{index}")
 
 
 @pytest.mark.asyncio
-async def test_prepare_messages_compacts_old_turns_and_injects_memory():
+async def test_prepare_messages_compacts_old_turns_and_injects_memory(monkeypatch):
+    monkeypatch.setattr("dialogue.conversation._now_hhmm", _time)
     conversation = Conversation(
         recent_turns=2,
         summary_trigger_turns=3,
@@ -37,12 +42,82 @@ async def test_prepare_messages_compacts_old_turns_and_injects_memory():
     )
     assert memory_index >= 2, "旧实现（无注入）下 memory_index==1，此断言保证红阶段有效"
     assert all(message["role"] == "system" for message in messages[1:memory_index])
+    # 时间感知：逐条原文带 [HH:MM] 前缀进 prompt，但不落历史存储
     assert [message["content"] for message in messages[memory_index + 1 :]] == [
-        "user-2",
-        "assistant-2",
-        "user-3",
-        "assistant-3",
-        "current",
+        f"[{_time()}] user-2",
+        f"[{_time()}] assistant-2",
+        f"[{_time()}] user-3",
+        f"[{_time()}] assistant-3",
+        f"[{_time()}] current",
+    ]
+    assert conversation.get_messages()[-1]["content"] == "current"
+
+
+@pytest.mark.asyncio
+async def test_prepare_messages_appends_stable_date_anchor(monkeypatch):
+    monkeypatch.setattr("dialogue.memory._today_line", lambda: "今天是2026-09-23 星期三。")
+    conversation = Conversation()
+    llm = AsyncMock()
+
+    first = await prepare_chat_messages(llm, conversation)
+    second = await prepare_chat_messages(llm, conversation)
+
+    # 日期锚点在人设之后；同一天内两次组 prompt 的 system 字节级一致（前缀缓存友好）
+    assert first[0]["content"].endswith("今天是2026-09-23 星期三。")
+    assert "真白花音" in first[0]["content"]
+    assert first[0]["content"] == second[0]["content"]
+
+    monkeypatch.setattr("dialogue.memory._today_line", lambda: "今天是2026-09-24 星期四。")
+    next_day = await prepare_chat_messages(llm, conversation)
+    assert next_day[0]["content"].endswith("今天是2026-09-24 星期四。")
+
+
+@pytest.mark.asyncio
+async def test_prepare_messages_prefixes_times_but_never_summary_system(monkeypatch):
+    monkeypatch.setattr("dialogue.conversation._now_hhmm", _time)
+    conversation = Conversation(
+        recent_turns=1,
+        summary_trigger_turns=2,
+        summary_trigger_chars=10_000,
+    )
+    for index in range(2):
+        conversation.add_user_message(f"msg{index}")
+        conversation.add_assistant_message(f"reply{index}")
+    llm = AsyncMock()
+    llm.summarize_chat = AsyncMock(return_value="早前聊了两轮。")
+    await prepare_chat_messages(llm, conversation)
+    conversation.add_user_message("current")
+
+    messages = await prepare_chat_messages(llm, conversation)
+
+    summary = next(m for m in messages if "<conversation_memory>" in m["content"])
+    assert summary["content"].startswith("以下是较早对话的压缩记忆")
+    assert "[12:34]" in messages[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_summarize_input_carries_time_prefixes(monkeypatch):
+    monkeypatch.setattr("dialogue.conversation._now_hhmm", _time)
+    conversation = Conversation(
+        recent_turns=1,
+        summary_trigger_turns=2,
+        summary_trigger_chars=10_000,
+    )
+    for index in range(2):
+        conversation.add_user_message(f"msg{index}")
+        conversation.add_assistant_message(f"reply{index}")
+    captured: dict = {}
+
+    class CapturingSummarizer:
+        async def summarize_chat(self, *, previous_summary, messages, max_chars):
+            captured["messages"] = messages
+            return "早前聊了两轮。"
+
+    await compact_conversation(CapturingSummarizer(), conversation)
+
+    assert [m["content"] for m in captured["messages"]] == [
+        "[12:34] msg0",
+        "[12:34] reply0",
     ]
 
 

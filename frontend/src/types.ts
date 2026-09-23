@@ -1,11 +1,13 @@
 export type ChatEvent =
   | { type: "sentence"; text: string }
-  | { type: "audio"; audio: string }        // base64 WAV
-  | { type: "audio_error"; message: string }
+  | { type: "audio"; audio: string; index: number } // base64 WAV；index = 轮内句序（TTS 预取下音频晚于后续 sentence 到达）
+  | { type: "audio_error"; message: string; index: number }
   | { type: "error"; message: string }
   | { type: "done" }
   | { type: "interrupted" }                  // 让路收尾：本轮到此为止，不是错误
   | { type: "motion"; motion: string }       // 句级动作闭集：点头/摇头/歪头
+  // 每轮时延观测（诊断用，不驱动 UI；字段口径见 docs/improvements/p1-10）
+  | { type: "timing"; [field: string]: unknown }
   | {
       type: "performance";
       emotion: string;

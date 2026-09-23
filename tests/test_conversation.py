@@ -21,6 +21,29 @@ def test_add_and_get_messages_returns_a_copy():
     ]
 
 
+def test_message_times_stay_aligned_across_rollback_and_compaction():
+    conversation = Conversation(
+        recent_turns=1,
+        summary_trigger_turns=2,
+        summary_trigger_chars=10_000,
+    )
+    add_turn(conversation, 0)
+    add_turn(conversation, 1)
+    conversation.add_user_message("pending")
+    assert len(conversation.message_times) == len(conversation.get_messages()) == 5
+
+    conversation.rollback_last_user_message()
+    assert len(conversation.message_times) == 4
+
+    plan = conversation.plan_compaction()
+    assert plan is not None
+    conversation.apply_compaction(plan, "早前记忆。")
+    assert len(conversation.message_times) == len(conversation.get_messages()) == 2
+
+    conversation.clear()
+    assert conversation.message_times == []
+
+
 def test_compaction_preserves_recent_turns_and_pending_user():
     conversation = Conversation(
         recent_turns=2,

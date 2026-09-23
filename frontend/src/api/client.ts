@@ -8,10 +8,13 @@ function isChatEvent(value: unknown): value is ChatEvent {
     case "sentence":
       return typeof v.text === "string";
     case "audio":
-      return typeof v.audio === "string";
+      return typeof v.audio === "string" && typeof v.index === "number";
     case "audio_error":
+      return typeof v.message === "string" && typeof v.index === "number";
     case "error":
       return typeof v.message === "string";
+    case "timing":
+      return true; // 诊断事件：结构宽松，前端不消费
     case "done":
     case "interrupted":
       return true;

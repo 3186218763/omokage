@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from config import AppConfig, load_config
+from config import MAX_TTS_PREFETCH_DEPTH, AppConfig, load_config
 from dialogue.asr_client import WhisperTranscriber
 from dialogue.conversation import Conversation
 from dialogue.jev_client import JevClient
@@ -26,6 +26,7 @@ from dialogue.speaking_style import SpeakingStyleRefBank, StylePrefixParser
 from dialogue.speech_text import normalize_speech_text, strip_style_for_history
 from dialogue.tts_api import parse_tts_request
 from dialogue.tts_client import TTSClient
+from frontend.turn_timing import TurnTiming, install_timing_log_file
 from scripts.check_live2d_assets import DEFAULT_LIVE2D_ROOT, assess
 
 
@@ -105,13 +106,21 @@ class WebChatService:
         min_chars: int = 4,
         style_ref_bank: SpeakingStyleRefBank | None = None,
         jev_client: JevClient | None = None,
+        tts_prefetch_depth: int = 2,
+        timing_event: bool = True,
     ):
+        if not 1 <= tts_prefetch_depth <= MAX_TTS_PREFETCH_DEPTH:
+            raise ValueError(
+                f"tts_prefetch_depth must be between 1 and {MAX_TTS_PREFETCH_DEPTH}"
+            )
         self._llm = llm_client
         self._tts = tts_client
         self._max_chars = max_chars
         self._min_chars = min_chars
         self._style_bank = style_ref_bank or SpeakingStyleRefBank()
         self._jev = jev_client
+        self._tts_prefetch_depth = tts_prefetch_depth
+        self._timing_event = timing_event
 
     async def stream(
         self,
@@ -122,21 +131,32 @@ class WebChatService:
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream events for one turn; honor the interrupt signal.
 
-        让路（interrupt 置位）：停 LLM 流、取消未送达的音频，已说出的句子
+        TTS 按句预取（深度 ``tts_prefetch_depth``）：事件先行、合成进按序队列，
+        队列满时结清最旧一句的音频，audio 事件带 ``index`` 标记句序。
+        让路（interrupt 置位）：停 LLM 流、取消全部未送达的音频，已说出的句子
         作为部分 assistant 消息进历史并发 ``interrupted`` 事件收尾。
         断连（CancelledError）仍整轮回滚——两者语义不同。
         """
         conversation.add_user_message(user_text)
         committed = False
         interrupted = False
-        pending_audio = None
+        # (句序 index, TTS task)：在飞合成按句序排队，下发与取消都从队头走
+        pending: list[tuple[int, asyncio.Task]] = []
         jev_task: asyncio.Task | None = None
+        timing = TurnTiming()
 
         def hit() -> bool:
             return interrupt is not None and interrupt.is_set()
 
         if interrupt is not None:
             interrupt.clear()  # 清掉上一轮可能残留的让路信号
+
+        def closing_timing_event() -> dict[str, Any] | None:
+            """轮末收口：JSON 日志始终打，SSE timing 事件按配置发。"""
+            timing.interrupted = interrupted
+            timing.log()
+            return timing.as_dict() if self._timing_event else None
+
         try:
             try:
                 messages = await prepare_chat_messages(self._llm, conversation)
@@ -149,6 +169,7 @@ class WebChatService:
                 spoken: list[str] = []
                 ref_kwargs: dict[str, str] = {}
                 performance_sent = False
+                next_audio_index = 0
 
                 def take_performance() -> dict[str, Any] | None:
                     nonlocal performance_sent
@@ -157,10 +178,35 @@ class WebChatService:
                     performance_sent = True
                     return from_speaking_style(style_parser.style).as_event()
 
+                async def emit_sentence(raw_sentence: str) -> AsyncIterator[dict[str, Any]]:
+                    """一个原始句子 → 事件流：动作与句子先行，TTS 入预取队列，队列满则按序结清最旧音频。"""
+                    nonlocal next_audio_index
+                    motion, stripped = motion_policy.take(raw_sentence)
+                    sentence = normalize_speech_text(stripped)
+                    if not sentence:
+                        return
+                    spoken.append(sentence)
+                    timing.mark("first_sentence")
+                    timing.sentences += 1
+                    if motion is not None:
+                        yield {"type": "motion", "motion": motion}
+                    yield {"type": "sentence", "text": sentence}
+                    index = next_audio_index
+                    next_audio_index += 1
+                    pending.append(
+                        (index, asyncio.create_task(
+                            self._tts.synthesize(sentence, **ref_kwargs)
+                        ))
+                    )
+                    while len(pending) >= self._tts_prefetch_depth:
+                        stale_index, task = pending.pop(0)
+                        yield await self._audio_event(task, stale_index, timing)
+
                 async for token in self._llm.stream_chat(messages):
                     if hit():
                         interrupted = True
                         break
+                    timing.mark("llm_first_token")
                     speech_chunk = style_parser.feed(token)
                     performance = take_performance()
                     if performance is not None:
@@ -177,19 +223,8 @@ class WebChatService:
                         continue
                     full_speech += speech_chunk
                     for raw_sentence in streamer.add_token(speech_chunk):
-                        motion, stripped = motion_policy.take(raw_sentence)
-                        sentence = normalize_speech_text(stripped)
-                        if not sentence:
-                            continue
-                        spoken.append(sentence)
-                        if pending_audio is not None:
-                            yield await self._audio_event(pending_audio)
-                        if motion is not None:
-                            yield {"type": "motion", "motion": motion}
-                        yield {"type": "sentence", "text": sentence}
-                        pending_audio = asyncio.create_task(
-                            self._tts.synthesize(sentence, **ref_kwargs)
-                        )
+                        async for event in emit_sentence(raw_sentence):
+                            yield event
                         if hit():
                             interrupted = True
                             break
@@ -205,34 +240,13 @@ class WebChatService:
                     if tail:
                         full_speech += tail
                         for raw_sentence in streamer.add_token(tail):
-                            motion, stripped = motion_policy.take(raw_sentence)
-                            sentence = normalize_speech_text(stripped)
-                            if not sentence:
-                                continue
-                            spoken.append(sentence)
-                            if pending_audio is not None:
-                                yield await self._audio_event(pending_audio)
-                            if motion is not None:
-                                yield {"type": "motion", "motion": motion}
-                            yield {"type": "sentence", "text": sentence}
-                            pending_audio = asyncio.create_task(
-                                self._tts.synthesize(sentence, **ref_kwargs)
-                            )
+                            async for event in emit_sentence(raw_sentence):
+                                yield event
 
                     remaining = streamer.flush()
                     if remaining:
-                        motion, stripped = motion_policy.take(remaining)
-                        sentence = normalize_speech_text(stripped)
-                        if sentence:
-                            spoken.append(sentence)
-                            if pending_audio is not None:
-                                yield await self._audio_event(pending_audio)
-                            if motion is not None:
-                                yield {"type": "motion", "motion": motion}
-                            yield {"type": "sentence", "text": sentence}
-                            pending_audio = asyncio.create_task(
-                                self._tts.synthesize(sentence, **ref_kwargs)
-                            )
+                        async for event in emit_sentence(remaining):
+                            yield event
                     normalized_response = normalize_speech_text(
                         strip_style_for_history(full_speech)
                     )
@@ -243,31 +257,27 @@ class WebChatService:
                         jev_task = asyncio.create_task(
                             self._jev.ask_messages(history, normalized_response)
                         )
-                    if pending_audio is not None:
-                        yield await self._audio_event(pending_audio)
-                        pending_audio = None
+                        timing.mark("jev_dispatch")
+                    while pending:
+                        index, task = pending.pop(0)
+                        yield await self._audio_event(task, index, timing)
                     if jev_task is not None:
                         try:
                             jev_decision = await jev_task
                         except Exception:
                             jev_decision = None
                         jev_task = None
+                        timing.mark("jev_done")
                 else:
-                    await self._cancel_audio(pending_audio)
-                    pending_audio = None
+                    await self._cancel_pending(pending)
             except asyncio.CancelledError:
-                if jev_task is not None:
-                    jev_task.cancel()
-                    with suppress(asyncio.CancelledError, Exception):
-                        await jev_task
-                await self._cancel_audio(pending_audio)
                 raise
             except Exception as exc:
-                if jev_task is not None:
-                    jev_task.cancel()
-                    with suppress(asyncio.CancelledError, Exception):
-                        await jev_task
-                await self._cancel_audio(pending_audio)
+                await self._cancel_task(jev_task)
+                await self._cancel_pending(pending)
+                closing = closing_timing_event()
+                if closing is not None:
+                    yield closing
                 yield {"type": "error", "message": str(exc)}
                 return
 
@@ -278,6 +288,9 @@ class WebChatService:
                 if partial is not None:
                     conversation.add_assistant_message(partial)
                     committed = True
+                closing = closing_timing_event()
+                if closing is not None:
+                    yield closing
                 yield {"type": "interrupted"}
                 return
 
@@ -285,24 +298,51 @@ class WebChatService:
             committed = True
             if jev_decision is not None:
                 yield jev_decision.as_event()
+            closing = closing_timing_event()
+            if closing is not None:
+                yield closing
             yield {"type": "done"}
         finally:
+            # 断连（GeneratorExit/aclose）不走上面的 except：在飞 TTS 与 Jev
+            # 在这里兜底取消，预取队列里最多 depth 个孤儿任务不能泄漏
+            await self._cancel_task(jev_task)
+            await self._cancel_pending(pending)
             if not committed:
                 conversation.rollback_last_user_message()
 
-    async def _cancel_audio(self, task) -> None:
+    async def aclose(self) -> None:
+        """释放内部 LLM 连接池（热重载/退出不泄漏）；客户端无 aclose 时静默。"""
+        close = getattr(self._llm, "aclose", None)
+        if callable(close):
+            await close()
+
+    async def _cancel_pending(self, pending: list[tuple[int, asyncio.Task]]) -> None:
+        """让路/断连/出错：按序取消全部在飞 TTS，队列清空。"""
+        while pending:
+            _index, task = pending.pop(0)
+            await self._cancel_task(task)
+
+    async def _cancel_task(self, task) -> None:
+        """取消并吞掉结果：音频与 Jev 决策都是可丢弃的辅助任务。"""
         if task is None:
             return
         task.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await task
 
-    async def _audio_event(self, task) -> dict[str, str]:
+    async def _audio_event(
+        self, task, index: int, timing: TurnTiming
+    ) -> dict[str, Any]:
         try:
             audio = await task
         except Exception as exc:
-            return {"type": "audio_error", "message": str(exc)}
-        return {"type": "audio", "audio": base64.b64encode(audio).decode("ascii")}
+            return {"type": "audio_error", "message": str(exc), "index": index}
+        timing.mark_audio()
+        return {
+            "type": "audio",
+            "audio": base64.b64encode(audio).decode("ascii"),
+            "index": index,
+        }
 
 
 def _default_service(config: AppConfig | None = None) -> WebChatService:
@@ -318,6 +358,8 @@ def _default_service(config: AppConfig | None = None) -> WebChatService:
         TTSClient(base_url=config.tts.base_url, timeout=config.tts.timeout),
         max_chars=config.max_sentence_chars,
         min_chars=config.min_sentence_chars,
+        tts_prefetch_depth=config.tts_prefetch_depth,
+        timing_event=config.timing_event,
         jev_client=JevClient(
             enabled=config.jev.enabled,
             base_url=config.jev.base_url,
@@ -375,10 +417,9 @@ def create_app(
         default_asr_language = runtime_config.asr.language
     @asynccontextmanager
     async def lifespan(app):
-        """应用关闭时释放内部创建的 LLM 客户端连接池(热重载/退出不泄漏)。"""
+        """应用关闭时释放服务持有的连接池（热重载/退出不泄漏）。"""
         yield
-        llm = getattr(chat_service, "_llm", None)
-        close = getattr(llm, "aclose", None)
+        close = getattr(chat_service, "aclose", None)
         if callable(close):
             await close()
 
@@ -387,9 +428,11 @@ def create_app(
         app.mount("/assets", StaticFiles(directory=WEB_ASSETS_DIR), name="assets")
     live2d_root = DEFAULT_LIVE2D_ROOT
     live2d_model_dir = ""
+    live2d_background = ""
     if runtime_config is not None:
         live2d_model_dir = runtime_config.live2d.model_dir
-    live2d_status = assess(live2d_root, live2d_model_dir)
+        live2d_background = runtime_config.live2d.background
+    live2d_status = assess(live2d_root, live2d_model_dir, live2d_background)
     if live2d_root.is_dir():
         app.mount("/live2d", StaticFiles(directory=live2d_root), name="live2d")
     sessions: dict[str, _SessionState] = {}
@@ -453,6 +496,7 @@ def create_app(
             "ready": True,
             "model_url": live2d_status.model_url,
             "core_url": live2d_status.core_url,
+            "background_url": live2d_status.background_url,
         }
 
     @app.get("/healthz")
@@ -645,6 +689,7 @@ def main() -> None:
         import uvicorn
     except ImportError as exc:
         raise SystemExit("Web 入口需要额外依赖，请运行：pip install -e '.[web]'") from exc
+    install_timing_log_file(PROJECT_ROOT / "logs")
     uvicorn.run(create_app(), host=args.host, port=args.port)
 
 

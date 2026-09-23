@@ -46,7 +46,6 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
   const sessionIdRef = useRef(loadSessionId());
   const busyRef = useRef(false);
   const interruptRef = useRef(false);
-  const pendingMotionRef = useRef<string | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
 
   useEffect(() => {
@@ -72,9 +71,13 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
       if (!message || busyRef.current) return;
       busyRef.current = true;
       interruptRef.current = false;
-      pendingMotionRef.current = null;
       setBusy(true);
       setStatus("generating");
+      // 动作配对按句序：TTS 预取下 audio 晚于后续 sentence 到达，
+      // 「暂存到下一块到达的音频」不再成立，改为 motion → 句 index → 音频 index。
+      let sentenceIndex = -1;
+      let pendingMotion: string | null = null;
+      const motionByIndex = new Map<number, string>();
       const userMessage: ChatMessage = {
         id: newId(),
         role: "user",
@@ -94,6 +97,11 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
       try {
         for await (const event of streamChat(message, sessionIdRef.current)) {
           if (event.type === "sentence") {
+            sentenceIndex += 1;
+            if (pendingMotion !== null) {
+              motionByIndex.set(sentenceIndex, pendingMotion);
+              pendingMotion = null;
+            }
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId
@@ -104,13 +112,10 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
           } else if (event.type === "audio") {
             // 已让路的轮：迟到的音频不再入队（淡出后再自动播放就穿帮了）
             if (interruptRef.current) continue;
-            const current = messagesRef.current.find((m) => m.id === assistantId);
-            const index = current?.audio.length ?? 0;
             const url = `data:audio/wav;base64,${event.audio}`;
             // 动作不在事件到达时触发，而是搭在对应句的音频上，起播瞬间才动
-            const motion = pendingMotionRef.current ?? undefined;
-            pendingMotionRef.current = null;
-            enqueueAudio({ key: `${assistantId}:${index}`, url, motion });
+            const motion = motionByIndex.get(event.index);
+            enqueueAudio({ key: `${assistantId}:${event.index}`, url, motion });
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId ? { ...m, audio: [...m.audio, { url }] } : m,
@@ -127,8 +132,10 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
           } else if (event.type === "performance") {
             onPerformance?.(event);
           } else if (event.type === "motion") {
-            // 暂存到下一块音频上；音频起播时由音频队列回调触发
-            pendingMotionRef.current = event.motion;
+            // 暂存到它修饰的那句上；该句音频起播时由音频队列回调触发
+            pendingMotion = event.motion;
+          } else if (event.type === "timing") {
+            // 每轮时延观测事件：不驱动 UI
           } else if (event.type === "error") {
             throw new Error(event.message);
           }

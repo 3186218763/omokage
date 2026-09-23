@@ -35,20 +35,125 @@ async def test_web_chat_streams_text_and_audio_events_in_order():
 
     events = [event async for event in service.stream("hello", Conversation())]
 
+    # 预取深度 2：两句事件先行，音频随后按 index 序下发
     assert [event["type"] for event in events] == [
         "performance",
         "sentence",
-        "audio",
         "sentence",
         "audio",
+        "audio",
+        "timing",
         "done",
     ]
     assert events[0]["emotion"] == "日常"
     assert events[0]["source"] == "speaking_style"
     assert events[1]["text"] == "你好呀。"
-    assert base64.b64decode(events[2]["audio"]) == b"wav-one"
-    assert events[3]["text"] == "今天也要加油！"
+    assert events[3]["index"] == 0
+    assert base64.b64decode(events[3]["audio"]) == b"wav-one"
+    assert events[2]["text"] == "今天也要加油！"
+    assert events[4]["index"] == 1
     assert base64.b64decode(events[4]["audio"]) == b"wav-two"
+
+
+@pytest.mark.asyncio
+async def test_web_tts_prefetch_synthesizes_ahead_of_delivery():
+    """深度 2：第一条音频下发时，下一句的合成必须已经在飞（流水线不空等）。"""
+    calls: list[str] = []
+
+    async def slow_synthesize(text: str, **_kwargs) -> bytes:
+        calls.append(text)
+        await asyncio.sleep(0)
+        return f"wav:{text}".encode()
+
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(
+        return_value=_async_iter(["第一句。", "第二句。", "第三句。"])
+    )
+    tts = AsyncMock()
+    tts.synthesize = slow_synthesize
+    service = WebChatService(llm, tts, tts_prefetch_depth=2)
+
+    events = [event async for event in service.stream("问题", Conversation())]
+
+    audios = [event for event in events if event["type"] == "audio"]
+    assert [event["index"] for event in audios] == [0, 1, 2]
+    # 收到第一条音频时，第二句的合成已经发起
+    first_audio_at = events.index(audios[0])
+    sentences_before = [
+        event for event in events[:first_audio_at] if event["type"] == "sentence"
+    ]
+    assert len(sentences_before) >= 2
+    assert calls[:2] == ["第一句。", "第二句。"]
+
+
+@pytest.mark.asyncio
+async def test_web_tts_prefetch_depth_one_keeps_legacy_interleaving():
+    """深度 1 = 逃生档：逐句「句子→音频」串行，等价旧管线次序。"""
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(
+        return_value=_async_iter(["第一句。", "第二句。", "第三句。"])
+    )
+    tts = AsyncMock()
+    tts.synthesize = AsyncMock(side_effect=[b"w1", b"w2", b"w3"])
+    service = WebChatService(llm, tts, tts_prefetch_depth=1)
+
+    events = [event async for event in service.stream("问题", Conversation())]
+
+    types = [event["type"] for event in events]
+    assert types == [
+        "performance",
+        "sentence",
+        "audio",
+        "sentence",
+        "audio",
+        "sentence",
+        "audio",
+        "timing",
+        "done",
+    ]
+
+
+def test_web_rejects_out_of_range_prefetch_depth():
+    llm = AsyncMock()
+    tts = AsyncMock()
+    with pytest.raises(ValueError, match="tts_prefetch_depth"):
+        WebChatService(llm, tts, tts_prefetch_depth=0)
+    with pytest.raises(ValueError, match="tts_prefetch_depth"):
+        WebChatService(llm, tts, tts_prefetch_depth=4)
+
+
+@pytest.mark.asyncio
+async def test_web_timing_event_reports_latency_fields_and_respects_config():
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(return_value=_async_iter(["一句话。"]))
+    tts = AsyncMock()
+    tts.synthesize = AsyncMock(return_value=b"wav")
+    conversation = Conversation()
+
+    events = [
+        event
+        async for event in WebChatService(llm, tts, timing_event=True).stream(
+            "问题", conversation
+        )
+    ]
+
+    timing = next(event for event in events if event["type"] == "timing")
+    assert events[-1] == {"type": "done"}
+    assert timing["interrupted"] is False
+    assert timing["sentences"] == 1
+    assert timing["llm_first_token_ms"] >= 0
+    assert timing["first_sentence_ms"] >= 0
+    assert timing["first_audio_ms"] >= 0
+    assert timing["jev_dispatch_ms"] is None  # 未配置 Jev
+    assert timing["audio_gaps_ms"] == []
+
+    silenced = [
+        event
+        async for event in WebChatService(llm, tts, timing_event=False).stream(
+            "问题", Conversation()
+        )
+    ]
+    assert all(event["type"] != "timing" for event in silenced)
 
 
 @pytest.mark.asyncio
@@ -85,9 +190,12 @@ async def test_web_tts_failure_emits_error_but_completes_text_stream():
         "performance",
         "sentence",
         "audio_error",
+        "timing",
         "done",
     ]
+    # min_chars=4：两句 token 合并为一句（「回复。」3 字不成句）
     assert events[1]["text"] == "回复。继续。"
+    assert events[2]["index"] == 0
     assert conversation.get_messages()[-1] == {
         "role": "assistant",
         "content": "回复。继续。",
@@ -106,7 +214,10 @@ async def test_web_empty_llm_response_emits_error_and_rolls_back():
         async for event in WebChatService(llm, tts).stream("问题", conversation)
     ]
 
-    assert events == [{"type": "error", "message": "LLM returned an empty response"}]
+    # error 轮也发 timing（失败轮恰是最需要观测的），随后 error 收尾
+    assert [event["type"] for event in events] == ["timing", "error"]
+    assert events[1] == {"type": "error", "message": "LLM returned an empty response"}
+    assert events[0]["sentences"] == 0
     assert conversation.get_messages() == []
 
 
@@ -129,10 +240,12 @@ async def test_web_filters_stage_directions_before_text_and_audio():
         "performance",
         "sentence",
         "audio",
+        "timing",
         "done",
     ]
     assert events[1]["text"] == "见到你真开心！"
     assert "说话语气" not in events[1]["text"]
+    assert events[2]["index"] == 0
     tts.synthesize.assert_awaited_once()
     assert tts.synthesize.await_args.args == ("见到你真开心！",)
     assert conversation.get_messages()[-1] == {
@@ -203,9 +316,98 @@ async def test_web_jev_failure_still_finishes_the_reply():
         "performance",
         "sentence",
         "audio",
+        "timing",
         "done",
     ]
     assert events[-1] == {"type": "done"}
+
+
+@pytest.mark.asyncio
+async def test_web_interrupt_cancels_all_inflight_tts_tasks():
+    """让路时预取队列里所有在飞 TTS 必须被取消，不允许孤儿任务占着 GPU。"""
+    states: dict[str, str] = {}
+    release = asyncio.Event()
+    interrupt = asyncio.Event()
+
+    async def slow_synthesize(text: str, **_kwargs) -> bytes:
+        states[text] = "started"
+        # 首句快（先送达），后续句慢：打断时它们必然还在飞，命中取消路径
+        delay = 0.05 if text == "第一句。" else 0.5
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            states[text] = "cancelled"
+            raise
+        states[text] = "done"
+        return b"wav"
+
+    async def slow_llm():
+        yield "第一句。"
+        yield "第二句。"
+        yield "第三句。"
+        await release.wait()
+
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(return_value=slow_llm())
+    tts = AsyncMock()
+    tts.synthesize = slow_synthesize
+    conversation = Conversation()
+
+    stream = WebChatService(llm, tts).stream("问题", conversation, interrupt=interrupt)
+    seen: list[str] = []
+    async for event in stream:
+        seen.append(event["type"])
+        if event["type"] == "audio":  # a1 已下发（约 0.3s 后）
+            break
+    interrupt.set()
+    release.set()
+    async for event in stream:
+        seen.append(event["type"])
+
+    assert seen[-2:] == ["timing", "interrupted"]
+    # 未送达的句子全部取消，已送达的算 done：不允许 started 悬空
+    # （「未启动」也合法：取消可能早于协程首步，此时 states 里没有记录）
+    assert set(states.values()) <= {"done", "cancelled"}
+    assert states["第一句。"] == "done"
+    assert states["第二句。"] == "cancelled"
+    assert states.get("第三句。") in (None, "cancelled")
+    # 生成器停在 a1 的 yield 上：第三句从未作为 sentence 事件送出，不进半截历史
+    assert conversation.get_messages()[-1]["content"] == "第一句。第二句。"
+
+
+@pytest.mark.asyncio
+async def test_web_client_disconnect_cancels_inflight_tts_tasks():
+    """断连（aclose → GeneratorExit）也不泄漏预取队列里的在飞 TTS。"""
+    states: dict[str, str] = {}
+
+    async def slow_synthesize(text: str, **_kwargs) -> bytes:
+        states[text] = "started"
+        try:
+            await asyncio.sleep(0.3)
+        except asyncio.CancelledError:
+            states[text] = "cancelled"
+            raise
+        states[text] = "done"
+        return b"wav"
+
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(
+        return_value=_async_iter(["第一句。", "第二句。"])
+    )
+    tts = AsyncMock()
+    tts.synthesize = slow_synthesize
+    conversation = Conversation()
+
+    stream = WebChatService(llm, tts).stream("问题", conversation)
+    assert (await anext(stream))["type"] == "performance"
+    assert (await anext(stream))["type"] == "sentence"
+    await stream.aclose()
+    await asyncio.sleep(0)  # 让取消传播到合成协程
+
+    # 生成器停在第一句的 yield 上：t1 要么尚未启动（取消早于首步），要么已捕获取消；
+    # 唯一不允许的是 done（跑完还留在后台）
+    assert states.get("第一句。") in (None, "cancelled")
+    assert conversation.get_messages() == []  # 断连整轮回滚
 
 
 def test_parse_chat_request_rejects_empty_or_oversized_messages():
@@ -553,8 +755,10 @@ async def test_web_interrupt_commits_spoken_part_and_ends_with_interrupted():
     release.set()
     rest = [event async for event in stream]
 
-    # 让路：未送达的音频取消，不再有 audio/done，收尾是 interrupted
-    assert rest == [{"type": "interrupted"}]
+    # 让路：预取队列里未送达的音频全部取消，不再有 audio/done，收尾是 timing + interrupted
+    assert [event["type"] for event in rest] == ["timing", "interrupted"]
+    assert rest[0]["interrupted"] is True
+    assert rest[0]["sentences"] == 1
     assert conversation.get_messages() == [
         {"role": "user", "content": "问题"},
         {"role": "assistant", "content": "第一句话。"},
@@ -586,7 +790,7 @@ async def test_web_interrupt_before_anything_spoken_rolls_back():
     release.set()
     rest = await asyncio.wait_for(consumer, timeout=1)
 
-    assert rest == [{"type": "interrupted"}]
+    assert [event["type"] for event in rest] == ["timing", "interrupted"]
     assert conversation.get_messages() == []
 
 

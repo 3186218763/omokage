@@ -1,5 +1,7 @@
 from config import load_config
 
+import pytest
+
 
 def _base_yaml() -> str:
     return """
@@ -27,6 +29,8 @@ def test_load_config_uses_asr_defaults(tmp_path):
     assert config.summary_trigger_turns == 12
     assert config.min_sentence_chars == 4
     assert config.max_sentence_chars == 50
+    assert config.tts_prefetch_depth == 2
+    assert config.timing_event is True
     assert config.tts.base_url == "http://localhost:5000"
     assert config.tts.model_name == "huayin"
     assert config.tts.speaker_name == "花音"
@@ -35,6 +39,37 @@ def test_load_config_uses_asr_defaults(tmp_path):
     assert config.jev.enabled is False
     assert config.jev.model == "jev-latest"
     assert config.live2d.model_dir == ""
+    assert config.live2d.background == ""
+
+
+def test_load_config_reads_prefetch_depth_and_timing_event(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        _base_yaml()
+        + """
+conversation:
+  timing_event: false
+streaming:
+  tts_prefetch_depth: 3
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(str(path))
+
+    assert config.tts_prefetch_depth == 3
+    assert config.timing_event is False
+
+
+def test_load_config_rejects_out_of_range_prefetch_depth(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        _base_yaml() + "\nstreaming:\n  tts_prefetch_depth: 4\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="tts_prefetch_depth"):
+        load_config(str(path))
 
 
 def test_load_config_reads_asr_settings(tmp_path):
