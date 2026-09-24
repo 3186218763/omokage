@@ -33,6 +33,8 @@ from pathlib import Path
 
 import httpx
 
+from bili_download import get_play_url, get_video_info
+
 # 强制无缓冲输出——后台运行时 stdout 默认全缓冲，会导致看不到进度
 print = partial(print, flush=True)
 
@@ -366,35 +368,6 @@ def _decode_probe(path: Path) -> tuple[subprocess.CompletedProcess[str], float]:
             except ValueError:
                 continue
     return result, duration
-
-
-def get_video_info(client: httpx.Client, bvid: str) -> dict:
-    resp = client.get(
-        "https://api.bilibili.com/x/web-interface/view",
-        params={"bvid": bvid},
-    )
-    data = resp.json()
-    if data["code"] != 0:
-        raise RuntimeError(f"获取视频信息失败: {data.get('message', data)}")
-    return data["data"]
-
-
-def get_play_url(client: httpx.Client, bvid: str, cid: int) -> dict:
-    resp = client.get(
-        "https://api.bilibili.com/x/player/wbi/playurl",
-        params={
-            "bvid": bvid,
-            "cid": cid,
-            "qn": 64,
-            "fnval": 16,
-            "fnver": 0,
-            "fourk": 0,
-        },
-    )
-    data = resp.json()
-    if data["code"] != 0:
-        raise RuntimeError(f"获取播放地址失败: {data.get('message', data)}")
-    return data["data"]
 
 
 def _part_state(

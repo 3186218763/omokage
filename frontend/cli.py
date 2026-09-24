@@ -39,7 +39,7 @@ async def main() -> None:
         min_chars=config.min_sentence_chars,
     )
     conversation = Conversation(
-        recent_turns=config.max_turns,
+        recent_turns=config.recent_turns,
         summary_trigger_turns=config.summary_trigger_turns,
         summary_trigger_chars=config.summary_trigger_chars,
         summary_max_chars=config.summary_max_chars,

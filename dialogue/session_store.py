@@ -9,6 +9,7 @@ app must be kept on loopback when no authentication layer is configured.
 from __future__ import annotations
 
 import sqlite3
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from .conversation import Conversation
@@ -51,11 +52,54 @@ class SessionStore:
                     kind TEXT NOT NULL,
                     value TEXT NOT NULL,
                     source_text TEXT NOT NULL,
+                    source_seq INTEGER,
+                    status TEXT NOT NULL DEFAULT 'active',
                     updated_at TEXT NOT NULL,
                     retrieval_count INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(session_id, kind, value)
                 );
+                CREATE TABLE IF NOT EXISTS turns (
+                    session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                    turn_id TEXT NOT NULL,
+                    generation INTEGER NOT NULL,
+                    user_text TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    finished_at TEXT,
+                    played_indices TEXT NOT NULL DEFAULT '[]',
+                    PRIMARY KEY(session_id, turn_id)
+                );
                 """
+            )
+            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(user_memories)")}
+            if "source_seq" not in columns:
+                db.execute("ALTER TABLE user_memories ADD COLUMN source_seq INTEGER")
+            if "status" not in columns:
+                db.execute("ALTER TABLE user_memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+            # A process restart cannot continue an in-flight turn. Mark it as
+            # interrupted so recovery never presents it as a completed reply.
+            db.execute("UPDATE turns SET status = 'interrupted' WHERE status = 'active'")
+
+    def begin_turn(self, session_id: str, turn_id: str, generation: int, user_text: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO sessions(session_id) VALUES (?) ON CONFLICT(session_id) DO NOTHING",
+                (session_id,),
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO turns(session_id, turn_id, generation, user_text, status) "
+                "VALUES (?, ?, ?, ?, 'active')",
+                (session_id, turn_id, generation, user_text),
+            )
+
+    def finish_turn(
+        self, session_id: str, turn_id: str, status: str, played_indices: set[int]
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE turns SET status = ?, finished_at = CURRENT_TIMESTAMP, played_indices = ? "
+                "WHERE session_id = ? AND turn_id = ?",
+                (status, json.dumps(sorted(played_indices)), session_id, turn_id),
             )
 
     def load(self, session_id: str) -> dict[str, object] | None:
@@ -84,10 +128,6 @@ class SessionStore:
         messages = snapshot["messages"]
         times = snapshot["message_times"]
         summary = snapshot["summary"]
-        if not isinstance(messages, list) or not isinstance(times, list) or not isinstance(summary, str):
-            raise ValueError("invalid conversation snapshot")
-        if len(messages) != len(times):
-            raise ValueError("conversation snapshot is not aligned")
         with self._connect() as db:
             db.execute(
                 "INSERT INTO sessions(session_id, summary) VALUES (?, ?) "
@@ -120,7 +160,9 @@ class SessionStore:
                 (session_id, int(enabled)),
             )
 
-    def remember_user_message(self, session_id: str, text: str) -> list[dict[str, object]]:
+    def remember_user_message(
+        self, session_id: str, text: str, *, source_seq: int | None = None
+    ) -> list[dict[str, object]]:
         if not self.memory_enabled(session_id):
             return []
         facts = extract_user_facts(text)
@@ -131,22 +173,25 @@ class SessionStore:
             for kind, value in facts:
                 if kind == "name":
                     db.execute(
-                        "DELETE FROM user_memories WHERE session_id = ? AND kind = ? AND value != ?",
+                        "UPDATE user_memories SET status = 'superseded' "
+                        "WHERE session_id = ? AND kind = ? AND value != ? AND status = 'active'",
                         (session_id, kind, value),
                     )
                 db.execute(
-                    "INSERT INTO user_memories(session_id, kind, value, source_text, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id, kind, value) DO UPDATE SET "
-                    "source_text=excluded.source_text, updated_at=excluded.updated_at",
-                    (session_id, kind, value, text, now),
+                    "INSERT INTO user_memories(session_id, kind, value, source_text, source_seq, status, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'active', ?) ON CONFLICT(session_id, kind, value) DO UPDATE SET "
+                    "source_text=excluded.source_text, source_seq=excluded.source_seq, "
+                    "status='active', updated_at=excluded.updated_at",
+                    (session_id, kind, value, text, source_seq, now),
                 )
         return self.list_memories(session_id)
 
     def list_memories(self, session_id: str) -> list[dict[str, object]]:
         with self._connect() as db:
             rows = db.execute(
-                "SELECT id, kind, value, source_text, updated_at, retrieval_count "
-                "FROM user_memories WHERE session_id = ? ORDER BY updated_at DESC, id DESC",
+                "SELECT id, kind, value, source_text, source_seq, status, updated_at, retrieval_count "
+                "FROM user_memories WHERE session_id = ? AND status = 'active' "
+                "ORDER BY updated_at DESC, id DESC",
                 (session_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -175,12 +220,15 @@ class SessionStore:
                 "UPDATE user_memories SET retrieval_count = retrieval_count + 1 WHERE id = ?",
                 [(item["id"],) for item in ranked],
             )
-        return [f"{item['kind']}: {item['value']}（用户原话：{item['source_text']}）" for item in ranked]
+        return [
+            f"{item['kind']}: {item['value']}（用户原话：{item['source_text']}；来源消息序号：{item['source_seq']}）"
+            for item in ranked
+        ]
 
     def delete_memory(self, session_id: str, memory_id: int) -> None:
         with self._connect() as db:
             db.execute(
-                "DELETE FROM user_memories WHERE session_id = ? AND id = ?",
+                "UPDATE user_memories SET status = 'deleted' WHERE session_id = ? AND id = ?",
                 (session_id, memory_id),
             )
 

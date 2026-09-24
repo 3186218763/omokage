@@ -5,12 +5,11 @@ import {
   type SoullinkRuntime as Runtime,
 } from "@soullink-emotion/engine";
 import { Live2DRenderer } from "@soullink-emotion/live2d-pixi";
+import { MOTION_DURATIONS, type Live2DManifest } from "../types";
 import { blendParams, normalizeEmotion, performanceVad } from "./blend";
 
-export interface StageManifest {
-  model_url: string;
-  core_url: string;
-}
+/** 舞台可用所需的严格版 manifest：模型与核心缺一不可。 */
+export type StageManifest = Required<Pick<Live2DManifest, "model_url" | "core_url">>;
 
 export interface PerformanceInput {
   emotion: string;
@@ -40,9 +39,9 @@ interface MotionCurve {
 }
 
 const MOTION_CURVES: Record<string, MotionCurve> = {
-  点头: { param: "ParamAngleY", amplitude: -14, durationSec: 0.8, phase: (t) => Math.sin(Math.PI * t) },
-  摇头: { param: "ParamAngleX", amplitude: 12, durationSec: 1.0, phase: (t) => Math.sin(2 * Math.PI * t) },
-  歪头: { param: "ParamAngleZ", amplitude: 12, durationSec: 1.0, phase: (t) => Math.sin(Math.PI * t) },
+  点头: { param: "ParamAngleY", amplitude: -14, durationSec: MOTION_DURATIONS.点头, phase: (t) => Math.sin(Math.PI * t) },
+  摇头: { param: "ParamAngleX", amplitude: 12, durationSec: MOTION_DURATIONS.摇头, phase: (t) => Math.sin(2 * Math.PI * t) },
+  歪头: { param: "ParamAngleZ", amplitude: 12, durationSec: MOTION_DURATIONS.歪头, phase: (t) => Math.sin(Math.PI * t) },
 };
 
 interface CubismDrawableList {

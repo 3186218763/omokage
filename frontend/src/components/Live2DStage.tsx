@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { mountStage, type PerformanceInput, type StageController } from "../live2d/stage";
+import type { Live2DManifest } from "../types";
 import styles from "./Live2DStage.module.css";
 
 export interface Live2DHandle {
@@ -58,11 +59,7 @@ export const Live2DStage = forwardRef<Live2DHandle, Live2DStageProps>(
     void (async () => {
       const response = await fetch("/api/live2d");
       if (!response.ok || cancelled) return;
-      const manifest = (await response.json()) as {
-        model_url?: string;
-        core_url?: string;
-        background_url?: string | null;
-      };
+      const manifest = (await response.json()) as Live2DManifest;
       if (cancelled) return;
       if (manifest.background_url) setBackgroundUrl(manifest.background_url);
       if (!manifest.model_url || !manifest.core_url) return;

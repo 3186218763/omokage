@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import multiprocessing as mp
-import os
 import sys
-import traceback
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+
+from retranscribe_lib import run_sharded, segment_metrics
+
 AUDIO_DIR = PROJECT_ROOT / "data" / "dataset_hq" / "audio"
 ANNOTATION = PROJECT_ROOT / "data" / "dataset_hq" / "annotation.list"
 CROSSCHECK = PROJECT_ROOT / "data" / "dataset_hq" / "crosscheck_report.json"
@@ -61,35 +62,13 @@ def transcribe_one(model, path: Path) -> dict:
     )
     materialized = list(segments)
     text = "".join(str(getattr(s, "text", "")) for s in materialized).strip()
-    weighted = 0.0
-    wsum = 0.0
-    for s in materialized:
-        w = max(float(getattr(s, "end", 0.0) or 0.0) - float(getattr(s, "start", 0.0) or 0.0), 0.01)
-        lp = getattr(s, "avg_logprob", None)
-        if lp is not None:
-            weighted += float(lp) * w
-            wsum += w
     return {
         "path": str(path),
         "lang": "zh",
         "text": text,
-        "avg_logprob": weighted / wsum if wsum else None,
+        **segment_metrics(materialized),
         "language_probability": float(getattr(info, "language_probability", 0.0) or 0.0),
     }
-
-
-def worker(worker_id: int, gpu_id: str, model_size: str, paths: list[str], out_q) -> None:
-    try:
-        os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
-        from faster_whisper import WhisperModel
-
-        model = WhisperModel(model_size, device="cuda", compute_type="float16")
-        for p in paths:
-            out_q.put(("result", worker_id, transcribe_one(model, Path(p))))
-    except BaseException:
-        out_q.put(("error", worker_id, traceback.format_exc()))
-    finally:
-        out_q.put(("done", worker_id, None))
 
 
 def main() -> int:
@@ -104,43 +83,17 @@ def main() -> int:
     if not wavs:
         return 0
 
-    gpus = [g.strip() for g in args.gpus.split(",") if g.strip()]
-    shards: list[list[str]] = [[] for _ in gpus]
-    for i, p in enumerate(wavs):
-        shards[i % len(gpus)].append(str(p))
-
-    out_q: mp.Queue = mp.Queue()
-    procs = [
-        mp.Process(target=worker, args=(i, gpu, args.model, shard, out_q), daemon=True)
-        for i, (gpu, shard) in enumerate(zip(gpus, shards))
-        if shard
-    ]
-    for p in procs:
-        p.start()
-
     cache: dict[str, dict] = {}
     if OUT_JSON.is_file():
         cache = {Path(str(x.get("path"))).name: x for x in json.loads(OUT_JSON.read_text(encoding="utf-8"))}
-    done_names = set(cache) & set(names)
-    print(f"cached: {len(done_names)}/{len(names)}", flush=True)
+    jobs = [p for p in wavs if p.name not in cache]
+    print(f"cached: {len(wavs) - len(jobs)}/{len(names)}", flush=True)
 
-    pending = len(wavs) - len(done_names)
-    done_procs: set[int] = set()
-    try:
-        while pending > 0 or len(done_procs) < len(procs):
-            kind, wid, payload = out_q.get(timeout=600)
-            if kind == "result":
-                cache[Path(str(payload["path"])).name] = payload
-                pending -= 1
-                if pending % 100 == 0:
-                    print(f"  progress: {len(names) - pending}/{len(names)}", flush=True)
-            elif kind == "error":
-                print(f"worker {wid} error:\n{payload}", file=sys.stderr, flush=True)
-            elif kind == "done":
-                done_procs.add(wid)
-    finally:
-        for p in procs:
-            p.join(timeout=30)
+    def on_result(payload: dict) -> None:
+        cache[Path(str(payload["path"])).name] = payload
+
+    run_sharded(jobs, [g.strip() for g in args.gpus.split(",") if g.strip()],
+                args.model, transcribe_one, on_result, progress_every=100)
 
     OUT_JSON.write_text(
         json.dumps(list(cache.values()), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

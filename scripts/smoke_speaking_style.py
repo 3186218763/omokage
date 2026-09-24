@@ -47,12 +47,8 @@ async def smoke_refs(text: str) -> None:
         clip = bank.resolve(style)
         if clip is None or not Path(clip.audio_path).is_file():
             raise SystemExit(f"missing ref for {style}")
-        audio = await tts.synthesize(
-            text,
-            ref_audio_path=clip.audio_path,
-            ref_text=clip.prompt_text,
-            ref_language=clip.prompt_lang,
-        )
+        # 声线已在 TTS 服务端锁定；这里只校验参考音资产齐全并走一次合成链路。
+        audio = await tts.synthesize(text)
         path = OUT / f"{style}.wav"
         path.write_bytes(audio)
         line = f"{style}: {len(audio)} B -> {path.name} | ref={clip.prompt_text}"

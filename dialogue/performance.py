@@ -8,11 +8,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .speaking_style import normalize_speaking_style
+from .speaking_style import SPEAKING_STYLES, normalize_speaking_style
 
 
 PERFORMANCE_EMOTIONS = ("日常", "元气", "温柔", "俏皮", "倔强", "惊讶")
 PERFORMANCE_EMOTION_SET = frozenset(PERFORMANCE_EMOTIONS)
+# 闭集与说话语气刻意相同（缺席时一一回落）；钉住防两处漂移。
+assert PERFORMANCE_EMOTION_SET == SPEAKING_STYLES
 DEFAULT_PERFORMANCE = "日常"
 SURPRISE_DECAY_MS = 1200
 

@@ -1,4 +1,4 @@
-import type { ChatEvent } from "../types";
+import { MOTION_DURATIONS, MOTIONS, type ChatEvent } from "../types";
 
 export type PerformanceEvent = Extract<ChatEvent, { type: "performance" }>;
 export type PlaybackEvent = {
@@ -21,7 +21,7 @@ export class PlaybackDirector {
   private done = false;
   private count = 0;
   private finished = new Set<number>();
-  private motions = new Map<number, string>();
+  private motions = new Map<number, (typeof MOTIONS)[number]>();
   private triggered = new Set<number>();
   private performance?: PerformanceEvent;
   private fallback?: PerformanceEvent;
@@ -92,12 +92,12 @@ export class PlaybackDirector {
         if (!this.triggered.has(event.index)) {
           this.triggered.add(event.index);
           if (name) {
-            const curveDuration = name === "点头" ? 0.8 : 1;
+            const curveDuration = MOTION_DURATIONS[name];
             const remaining = event.duration - event.currentTime;
             // `playing` may arrive before metadata has populated duration.
             // Start from the media clock anyway; a later ended event stops it
             // if the clip is too short to contain the full curve.
-            const durationKnown = Number.isFinite(event.duration) && event.duration > 0 && Number.isFinite(remaining);
+            const durationKnown = Number.isFinite(event.duration) && event.duration > 0;
             const duration = durationKnown ? Math.min(curveDuration, remaining) : curveDuration;
             if (!durationKnown || remaining >= 0.25) {
               effects.push({ type: "motion", name, index: event.index, duration, currentTime: event.currentTime });

@@ -129,25 +129,28 @@ def _pick_fewshot(user_text: str, data: dict, rng: random.Random) -> list[str]:
                 continue
             chosen.append(text)
 
+    def by_lang(lang: str) -> list[dict]:
+        return [item for item in pool if item.get("lang") == lang]
+
+    def in_scenes(items: list[dict], scenes: set[str]) -> list[dict]:
+        return [item for item in items if scenes & set(item.get("scenes", []))]
+
     scenes = _matched_scenes(user_text)
     # late 过滤：仅对 asr_pool；无 era_tag 兼容旧数据
     pool = [item for item in pool if _asr_item_allowed(item, scenes)]
     if scenes:
-        add([item for item in official + fan if scenes & set(item.get("scenes", []))])
-        if pool:
-            zh = [item for item in pool if "zh" == item.get("lang")]
-            add([item for item in zh if scenes & set(item.get("scenes", []))])
-            if user_has_jp:
-                ja = [item for item in pool if "ja" == item.get("lang")]
-                add([item for item in ja if scenes & set(item.get("scenes", []))])
+        add(in_scenes(official + fan, scenes))
+        add(in_scenes(by_lang("zh"), scenes))
+        if user_has_jp:
+            add(in_scenes(by_lang("ja"), scenes))
     else:
         add(official + fan)
     if pool and len(chosen) < 3:
-        zh = [item for item in pool if "zh" == item.get("lang")]
+        zh = by_lang("zh")
         rng.shuffle(zh)
         add(zh)
         if user_has_jp:
-            ja = [item for item in pool if "ja" == item.get("lang")]
+            ja = by_lang("ja")
             rng.shuffle(ja)
             add(ja)
     return chosen[:_MAX_EXAMPLES]

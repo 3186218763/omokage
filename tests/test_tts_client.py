@@ -25,16 +25,20 @@ async def test_synthesize_sends_only_text():
         return_value=httpx.Response(200, content=b"audio")
     )
     client = TTSClient(base_url="http://127.0.0.1:5000")
-    await client.synthesize(
-        "你好世界",
-        ref_audio_path="/ref.wav",
-        ref_text="参考文本",
-        ref_language="zh",
-    )
+    await client.synthesize("你好世界")
 
     assert route.called
     body = json.loads(route.calls[0].request.content)
     assert body == {"text": "你好世界"}
+
+
+@pytest.mark.asyncio
+async def test_synthesize_rejects_reference_clip_parameters():
+    """声线已在服务端锁定：参考音参数不再是兼容入参，直接拒绝。"""
+    client = TTSClient(base_url="http://127.0.0.1:5000")
+
+    with pytest.raises(TypeError):
+        await client.synthesize("你好世界", ref_audio_path="/ref.wav", ref_text="参考文本")
 
 
 @pytest.mark.asyncio

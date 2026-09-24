@@ -7,6 +7,7 @@ import yaml
 MAX_TTS_PREFETCH_DEPTH = 3
 
 _LLM_FIELDS = {"api_key", "base_url", "model", "temperature", "max_tokens"}
+_ASR_FIELDS = {"model", "device", "compute_type", "language", "beam_size", "max_upload_mb"}
 _TTS_FIELDS = {
     "base_url",
     "model_name",
@@ -86,7 +87,7 @@ _JEV_FIELDS = {
 class AppConfig:
     llm: LLMConfig
     tts: TTSConfig
-    max_turns: int = 8
+    recent_turns: int = 8
     summary_trigger_turns: int = 12
     summary_trigger_chars: int = 12_000
     summary_max_chars: int = 1_800
@@ -111,8 +112,8 @@ def load_config(path: str = "configs/config.yaml") -> AppConfig:
         )
     with open(config_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    conversation = data.get("conversation", {})
-    streaming = data.get("streaming", {})
+    conversation = data.get("conversation") or {}
+    streaming = data.get("streaming") or {}
     jev_raw = data.get("jev") or {}
     live2d_raw = data.get("live2d") or {}
     tts_prefetch_depth = streaming.get("tts_prefetch_depth", 2)
@@ -133,8 +134,8 @@ def load_config(path: str = "configs/config.yaml") -> AppConfig:
         tts=TTSConfig(
             **{key: value for key, value in data["tts"].items() if key in _TTS_FIELDS}
         ),
-        asr=ASRConfig(**data.get("asr", {})),
-        max_turns=conversation.get(
+        asr=ASRConfig(**{key: value for key, value in (data.get("asr") or {}).items() if key in _ASR_FIELDS}),
+        recent_turns=conversation.get(
             "recent_turns", conversation.get("max_turns", 8)
         ),
         summary_trigger_turns=conversation.get("summary_trigger_turns", 12),

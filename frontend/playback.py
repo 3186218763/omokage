@@ -10,6 +10,8 @@ class PlaybackLedger:
     sentences: list[str] = field(default_factory=list)
     audio: set[int] = field(default_factory=set)
     started: set[int] = field(default_factory=set)
+    ended: set[int] = field(default_factory=set)
+    failed: set[int] = field(default_factory=set)
     event_seq: int = -1
     cancelled: bool = False
     committed_text: str | None = None
@@ -20,8 +22,16 @@ class PlaybackLedger:
         if index not in self.audio:
             raise ValueError("playback index was not sent as audio")
         self.event_seq = event_seq
-        if kind in {"started", "ended"}:
+        if kind in {"started", "ended", "failed"}:
             self.started.add(index)
+        if kind == "ended":
+            self.ended.add(index)
+        if kind == "failed":
+            self.failed.add(index)
+
+    @property
+    def settled(self) -> set[int]:
+        return self.ended | self.failed
 
     def cancel(self, highest_started: int | None = None, started_indices: list[int] | None = None) -> None:
         if self.cancelled:

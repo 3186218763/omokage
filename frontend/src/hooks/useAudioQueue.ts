@@ -11,6 +11,9 @@ export interface QueueItem {
   pauseMs?: number;
 }
 
+/** 队列条目 key 的序列化格式：`${turnId}:${index}`。本模块的私有协议。 */
+export const audioKey = (turnId: string, index: number) => `${turnId}:${index}`;
+
 function createAudioContext(): AudioContext | null {
   const Ctor = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   return Ctor ? new Ctor() : null;
@@ -71,8 +74,6 @@ export function useAudioQueue(options?: {
   }, []);
 
   const clear = useCallback(() => {
-    if (mouthRelease.current !== null) cancelAnimationFrame(mouthRelease.current);
-    mouthRelease.current = null;
     if (pauseTimer.current !== null) window.clearTimeout(pauseTimer.current);
     pauseTimer.current = null;
     setHolding(false);
@@ -82,6 +83,7 @@ export function useAudioQueue(options?: {
     pending.current = [];
     seen.current.clear();
     release();
+    // release 可能启动嘴型回落动画，这里再兜一次取消。
     if (mouthRelease.current !== null) cancelAnimationFrame(mouthRelease.current);
     mouthRelease.current = null;
     mouthLevel.current = 0;
@@ -164,6 +166,7 @@ export function useAudioQueue(options?: {
     audio.addEventListener("error", () => finish("failed"));
     if (context?.state === "suspended") void context.resume().catch(() => {});
     void audio.play().catch(() => {
+      // 自动播放被拒：不判失败，保留该条等用户手势（toggle 可重播）。
       if (valid()) { setIsPlaying(false); emit("paused"); }
     });
   }, [release]);

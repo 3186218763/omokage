@@ -1,5 +1,22 @@
+/** 后端闭集的镜像：dialogue/speaking_style.py、performance.py、motion.py。 */
+export const EMOTIONS = ["日常", "元气", "温柔", "俏皮", "倔强", "惊讶"] as const;
+export const MOTIONS = ["点头", "摇头", "歪头"] as const;
+/** 程序化动作曲线时长（秒），与 live2d/stage.ts 的 MOTION_CURVES 对齐。 */
+export const MOTION_DURATIONS: Record<(typeof MOTIONS)[number], number> = {
+  点头: 0.8,
+  摇头: 1,
+  歪头: 1,
+};
+
+/** GET /api/live2d 的响应形状；model_url/core_url 缺失时舞台不可用。 */
+export interface Live2DManifest {
+  model_url?: string;
+  core_url?: string;
+  background_url?: string | null;
+}
+
 export type ChatEvent = { v: 2; turn_id: string } & (
-  | { type: "sentence"; text: string; index: number; motion: string | null; pause_ms?: number }
+  | { type: "sentence"; text: string; index: number; motion: (typeof MOTIONS)[number] | null; pause_ms?: number }
   | { type: "audio"; audio: string; mime_type?: "audio/wav" | "audio/mpeg"; index: number } // base64；index = 轮内句序
   | { type: "audio_error"; message: string; index: number }
   | { type: "error"; message: string }

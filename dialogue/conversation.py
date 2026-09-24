@@ -35,29 +35,20 @@ class Conversation:
 
     def __init__(
         self,
-        max_turns: int | None = None,
+        recent_turns: int = 8,
         *,
-        recent_turns: int | None = None,
         summary_trigger_turns: int | None = None,
         summary_trigger_chars: int = 12_000,
         summary_max_chars: int = 1_800,
     ):
-        if max_turns is not None and recent_turns is not None:
-            if max_turns != recent_turns:
-                raise ValueError("max_turns and recent_turns must match")
-        resolved_recent_turns = (
-            recent_turns
-            if recent_turns is not None
-            else (max_turns if max_turns is not None else 8)
-        )
         resolved_trigger_turns = (
             summary_trigger_turns
             if summary_trigger_turns is not None
-            else max(12, resolved_recent_turns + 2)
+            else max(12, recent_turns + 2)
         )
-        if resolved_recent_turns < 1:
+        if recent_turns < 1:
             raise ValueError("recent_turns must be positive")
-        if resolved_trigger_turns <= resolved_recent_turns:
+        if resolved_trigger_turns <= recent_turns:
             raise ValueError("summary_trigger_turns must exceed recent_turns")
         if summary_trigger_chars < 1:
             raise ValueError("summary_trigger_chars must be positive")
@@ -70,7 +61,7 @@ class Conversation:
         self._times: list[str] = []
         self._summary = ""
         self.user_memory_context: list[str] = []
-        self._recent_turns = resolved_recent_turns
+        self._recent_turns = recent_turns
         self._summary_trigger_turns = resolved_trigger_turns
         self._summary_trigger_chars = summary_trigger_chars
         self._summary_max_chars = summary_max_chars

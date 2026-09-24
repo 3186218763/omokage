@@ -25,7 +25,7 @@ def test_load_config_uses_asr_defaults(tmp_path):
     assert config.asr.language == "auto"
     assert config.asr.max_upload_mb == 15
     assert config.llm.temperature == 0.8
-    assert config.max_turns == 8
+    assert config.recent_turns == 8
     assert config.summary_trigger_turns == 12
     assert config.min_sentence_chars == 4
     assert config.max_sentence_chars == 50
@@ -124,7 +124,7 @@ streaming:
 
     config = load_config(str(path))
 
-    assert config.max_turns == 6
+    assert config.recent_turns == 6
     assert config.summary_trigger_turns == 10
     assert config.summary_trigger_chars == 9000
     assert config.summary_max_chars == 1200
@@ -139,7 +139,7 @@ def test_load_config_supports_legacy_max_turns(tmp_path):
         encoding="utf-8",
     )
 
-    assert load_config(str(path)).max_turns == 7
+    assert load_config(str(path)).recent_turns == 7
 
 
 def test_load_config_ignores_legacy_protocol_and_frequency_penalty(tmp_path):

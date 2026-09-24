@@ -1,12 +1,14 @@
 /** 表演情绪 → Live2D 参数。数值与 dialogue/performance.py 的 VAD 表一致。 */
 
+import { EMOTIONS } from "../types";
+
 export interface Vad {
   valence: number;
   arousal: number;
   dominance: number;
 }
 
-export const VAD: Record<string, Vad> = {
+const VAD: Record<(typeof EMOTIONS)[number], Vad> = {
   日常: { valence: 0.55, arousal: 0.35, dominance: 0.5 },
   元气: { valence: 0.8, arousal: 0.75, dominance: 0.6 },
   温柔: { valence: 0.7, arousal: 0.25, dominance: 0.4 },
@@ -15,10 +17,10 @@ export const VAD: Record<string, Vad> = {
   惊讶: { valence: 0.5, arousal: 0.8, dominance: 0.45 },
 };
 
-const DEFAULT_EMOTION = "日常";
+const DEFAULT_EMOTION: (typeof EMOTIONS)[number] = "日常";
 
-export function normalizeEmotion(emotion: string): string {
-  return emotion in VAD ? emotion : DEFAULT_EMOTION;
+export function normalizeEmotion(emotion: string): (typeof EMOTIONS)[number] {
+  return EMOTIONS.find((name) => name === emotion) ?? DEFAULT_EMOTION;
 }
 
 export function performanceVad(emotion: string, intensity: number): Vad {

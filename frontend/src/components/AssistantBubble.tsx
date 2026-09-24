@@ -25,8 +25,7 @@ export function AssistantBubble({ assistant, activeKey, pending, playing, holdin
     ? (assistant?.sentences[heard.current.index] ?? "")
     : (assistant?.sentences.at(-1) ?? "");
   const body = line || (!playbackComplete || pending ? "…" : assistant?.error ?? "");
-  const greeting = !assistant;
-  const text = greeting ? GREETING : body;
+  const text = assistant ? body : GREETING;
   const audioFailed = assistant?.audio.some((item) => item.error) ?? false;
   const showError = Boolean(assistant?.error && line);
   // 漫画式左右交替：一句从嘴左边冒、下一句从嘴右边冒

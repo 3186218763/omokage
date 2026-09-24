@@ -38,22 +38,8 @@ class TTSClient:
                 "TTS 服务未运行，请先启动 Style-Bert-VITS2 API"
             ) from exc
 
-    async def synthesize(
-        self,
-        text: str,
-        text_language: str | None = None,
-        *,
-        ref_audio_path: str | None = None,
-        ref_text: str | None = None,
-        ref_language: str | None = None,
-        style: str | None = None,
-    ) -> bytes:
-        """Synthesize ``text`` as WAV bytes.
-
-        Extra kwargs are accepted for orchestrator compatibility but ignored:
-        this engine always uses the locked Huayin voice.
-        """
-        del text_language, ref_audio_path, ref_text, ref_language, style
+    async def synthesize(self, text: str) -> bytes:
+        """Synthesize ``text`` as WAV bytes with the locked Huayin voice."""
         normalized_text = normalize_speech_text(text)
         if normalized_text is None:
             raise ValueError("text contains no speakable content")

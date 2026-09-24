@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAudioQueue } from "./hooks/useAudioQueue";
+import { useAudioQueue, audioKey } from "./hooks/useAudioQueue";
 import { useChat } from "./hooks/useChat";
 import { useRecorder } from "./hooks/useRecorder";
 import type { ChatMessage as ChatMessageModel } from "./types";
@@ -15,13 +15,26 @@ import type { ChatEvent } from "./types";
 import { recordPlayback } from "./playback/telemetry";
 import styles from "./App.module.css";
 
+/** 状态徽标优先级：录音侧错误 > 转写中 > 录音中 > 聊天状态。 */
+function displayStatusOf(
+  recorder: ReturnType<typeof useRecorder>,
+  chatStatus: Status,
+): Status {
+  if (recorder.error === "mic") return "mic-error";
+  if (recorder.error === "insecure") return "insecure";
+  if (recorder.error === "asr") return "asr-error";
+  if (recorder.isTranscribing) return "transcribing";
+  if (recorder.isRecording) return "recording";
+  return chatStatus;
+}
+
 export default function App() {
   const stageRef = useRef<Live2DHandle | null>(null);
   const recordBtnRef = useRef<HTMLButtonElement | null>(null);
   const director = useRef(new PlaybackDirector());
   const [playbackComplete, setPlaybackComplete] = useState(true);
   const [startedIndex, setStartedIndex] = useState<number | null>(null);
-  const report = useRef<(turnId: string, index: number, kind: "started" | "ended") => void>(() => {});
+  const report = useRef<(turnId: string, index: number, kind: "started" | "ended" | "failed") => void>(() => {});
   const execute = useCallback((effects: Effect[]) => {
     for (const effect of effects) {
       const stage = stageRef.current;
@@ -46,8 +59,8 @@ export default function App() {
     if (event.type === "ended" || event.type === "failed") {
       setPlaybackComplete(director.current.closed);
     }
-    if (event.type === "playing" || event.type === "ended") {
-      report.current(event.turnId, event.index, event.type === "playing" ? "started" : "ended");
+    if (event.type === "playing" || event.type === "ended" || event.type === "failed") {
+      report.current(event.turnId, event.index, event.type === "playing" ? "started" : event.type);
     }
   }, [execute]);
   const audio = useAudioQueue({
@@ -108,18 +121,14 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeHistory, historyOpen]);
 
-  const displayStatus: Status = recorder.error === "mic" ? "mic-error"
-    : recorder.error === "insecure" ? "insecure"
-    : recorder.error === "asr" ? "asr-error"
-    : recorder.isTranscribing ? "transcribing"
-    : recorder.isRecording ? "recording"
-    : chat.status;
+  const displayStatus = displayStatusOf(recorder, chat.status);
 
   const toggleAudio = useCallback((message: ChatMessageModel, index: number) => {
     const url = message.audio[index]?.url;
     if (url) {
-      if (audio.activeKey !== `${message.id}:${index}`) void chat.interrupt();
-      audio.toggle({ key: `${message.id}:${index}`, url });
+      const key = audioKey(message.id, index);
+      if (audio.activeKey !== key) void chat.interrupt();
+      audio.toggle({ key, url });
     }
   }, [audio, chat]);
 
@@ -130,8 +139,9 @@ export default function App() {
     void chat.reset();
   }, [audio, chat]);
 
-  const lastUser = [...chat.messages].reverse().find((message) => message.role === "user") ?? null;
-  const lastAssistant = [...chat.messages].reverse().find((message) => message.role === "assistant") ?? null;
+  const reversed = [...chat.messages].reverse();
+  const lastUser = reversed.find((message) => message.role === "user") ?? null;
+  const lastAssistant = reversed.find((message) => message.role === "assistant") ?? null;
 
   return (
     <div className={styles.stage}>

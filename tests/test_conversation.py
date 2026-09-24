@@ -171,7 +171,6 @@ def test_clear_removes_messages_and_summary():
         {"recent_turns": 2, "summary_trigger_turns": 2},
         {"summary_trigger_chars": 0},
         {"summary_max_chars": 0},
-        {"max_turns": 3, "recent_turns": 2},
     ],
 )
 def test_invalid_memory_settings(kwargs):

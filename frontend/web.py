@@ -23,16 +23,14 @@ from dialogue.asr_client import WhisperTranscriber
 from dialogue.conversation import Conversation
 from dialogue.jev_client import JevClient
 from dialogue.llm_client import LLMClient
-from dialogue.memory import prepare_chat_messages
-from dialogue.motion import MotionPolicy
-from dialogue.pause import PausePolicy
+from dialogue.context_builder import ContextBuilder
 from dialogue.performance import from_speaking_style
+from dialogue.sentence_pipeline import SentencePipeline
 from dialogue.session_store import SessionStore
-from dialogue.sentence_streamer import SentenceStreamer
-from dialogue.speaking_style import SpeakingStyleRefBank, StylePrefixParser
 from dialogue.speech_text import normalize_speech_text
 from dialogue.tts_api import parse_tts_request
 from dialogue.tts_client import TTSClient
+from dialogue.turn import Turn, TurnRequest, TurnStatus
 from frontend.turn_timing import TurnTiming, install_timing_log_file
 from scripts.check_live2d_assets import DEFAULT_LIVE2D_ROOT, assess
 
@@ -71,6 +69,10 @@ class _SessionState:
     playback: PlaybackLedger | None = None
     reservations: int = 0
     interrupt: asyncio.Event = field(default_factory=asyncio.Event)
+    pending_memory_text: str | None = None
+    pending_memory_turn_id: str | None = None
+    generation: int = 0
+    active_turn: Turn | None = None
 
 
 def parse_session_id(payload: Mapping[str, Any]) -> str:
@@ -103,8 +105,8 @@ def sse_event(payload: Mapping[str, Any]) -> str:
     return f"data: {json.dumps(dict(payload), ensure_ascii=False)}\n\n"
 
 
-class WebChatService:
-    """Stream sentence and audio events while keeping one conversation history."""
+class LiveConversation:
+    """Own one live turn: LLM, sentence timeline, Kev, TTS and cancellation."""
 
     def __init__(
         self,
@@ -113,7 +115,6 @@ class WebChatService:
         *,
         max_chars: int = 50,
         min_chars: int = 4,
-        style_ref_bank: SpeakingStyleRefBank | None = None,
         jev_client: JevClient | None = None,
         tts_prefetch_depth: int = 2,
         timing_event: bool = True,
@@ -128,7 +129,6 @@ class WebChatService:
         self._tts = tts_client
         self._max_chars = max_chars
         self._min_chars = min_chars
-        self._style_bank = style_ref_bank or SpeakingStyleRefBank()
         self._jev = jev_client
         self._tts_prefetch_depth = tts_prefetch_depth
         self._timing_event = timing_event
@@ -156,28 +156,20 @@ class WebChatService:
         interrupt_task = asyncio.create_task(signal.wait())
         timing = TurnTiming()
         spoken: list[str] = []
-        raw_sentences: list[str] = []
-        parser = StylePrefixParser()
-        splitter = SentenceStreamer(self._max_chars, min_chars=self._min_chars)
-        policy = MotionPolicy()
-        pause_policy = PausePolicy()
+        ready_sentences: list = []  # SentencePipeline 产出、待派发 TTS 的句子
+        pipeline = SentencePipeline(self._max_chars, min_chars=self._min_chars)
         performance_sent = False
         llm_done = False
         jev_started = False
-        ref_kwargs = {}
         try:
-            prepare_task = asyncio.create_task(prepare_chat_messages(self._llm, conversation))
+            prepare_task = asyncio.create_task(ContextBuilder(self._llm).build(conversation))
             await asyncio.wait({prepare_task, interrupt_task}, return_when=asyncio.FIRST_COMPLETED)
             if not signal.is_set():
                 llm_stream = self._llm.stream_chat(prepare_task.result()).__aiter__()
             while not signal.is_set():
-                if parser.resolved and not performance_sent and (not llm_done or raw_sentences):
+                if pipeline.style_resolved and not performance_sent and (not llm_done or ready_sentences):
                     performance_sent = True
-                    yield from_speaking_style(parser.style).as_event()
-                    clip = self._style_bank.resolve(parser.style)
-                    if clip is not None:
-                        ref_kwargs = dict(ref_audio_path=clip.audio_path,
-                                          ref_text=clip.prompt_text, ref_language=clip.prompt_lang)
+                    yield from_speaking_style(pipeline.style).as_event()
                 if signal.is_set():
                     break
                 if jev_task is not None and jev_task.done():
@@ -190,43 +182,37 @@ class WebChatService:
                     if decision is not None:
                         yield decision.as_event()
                     continue
-                if raw_sentences and len(pending) < self._tts_prefetch_depth:
-                    pause_ms, without_pause = pause_policy.take(
-                        raw_sentences.pop(0), opening=not spoken,
-                    )
-                    motion, stripped = policy.take(without_pause)
-                    sentence = normalize_speech_text(stripped)
-                    if not sentence:
-                        continue
+                if ready_sentences and len(pending) < self._tts_prefetch_depth:
+                    utterance = ready_sentences.pop(0)
                     index = len(spoken)
-                    spoken.append(sentence)
+                    spoken.append(utterance.text)
                     timing.mark("first_sentence")
                     timing.sentences += 1
                     # Keep the motion on the sentence it annotates. The web
                     # protocol can then pair it with the same audio index
                     # without a separate "next motion" buffer.
-                    sentence_event = {"type": "sentence", "text": sentence}
-                    if motion is not None:
-                        sentence_event["motion"] = motion
-                    if pause_ms:
-                        sentence_event["pause_ms"] = pause_ms
+                    sentence_event = {"type": "sentence", "text": utterance.text}
+                    if utterance.motion is not None:
+                        sentence_event["motion"] = utterance.motion
+                    if utterance.pause_ms:
+                        sentence_event["pause_ms"] = utterance.pause_ms
                     yield sentence_event
                     if signal.is_set():
                         break
-                    pending.append((index, asyncio.create_task(self._synthesize_audio(sentence, ref_kwargs))))
+                    pending.append((index, asyncio.create_task(self._synthesize_audio(utterance.text))))
                     if self._jev is not None and not jev_started:
                         jev_started = True
                         jev_task = asyncio.create_task(self._jev.ask_messages(
-                            conversation.get_messages(), sentence))
+                            conversation.get_messages(), utterance.text))
                         timing.mark("jev_dispatch")
                     continue
                 if pending and pending[0][1].done():
                     index, task = pending.pop(0)
                     yield await self._audio_event(task, index, timing)
                     continue
-                if llm_done and not raw_sentences and not pending:
+                if llm_done and not ready_sentences and not pending:
                     break  # Do not extend generation to wait for an auxiliary decision.
-                if not llm_done and not raw_sentences and len(pending) < self._tts_prefetch_depth and token_task is None:
+                if not llm_done and not ready_sentences and len(pending) < self._tts_prefetch_depth and token_task is None:
                     token_task = asyncio.create_task(anext(llm_stream))
                 tasks = {interrupt_task}
                 if token_task is not None:
@@ -243,14 +229,10 @@ class WebChatService:
                         token = token_task.result()
                     except StopAsyncIteration:
                         llm_done = True
-                        tail = parser.flush()
-                        raw_sentences.extend(splitter.add_token(tail))
-                        remaining = splitter.flush()
-                        if remaining:
-                            raw_sentences.append(remaining)
+                        ready_sentences.extend(pipeline.close())
                     else:
                         timing.mark("llm_first_token")
-                        raw_sentences.extend(splitter.add_token(parser.feed(token)))
+                        ready_sentences.extend(pipeline.feed(token))
                     token_task = None
             interrupted = signal.is_set()
             response = normalize_speech_text("".join(spoken))
@@ -302,8 +284,8 @@ class WebChatService:
         with suppress(asyncio.CancelledError, Exception):
             await task
 
-    async def _synthesize_audio(self, sentence: str, ref_kwargs: dict) -> tuple[bytes, str]:
-        audio = await self._tts.synthesize(sentence, **ref_kwargs)
+    async def _synthesize_audio(self, sentence: str) -> tuple[bytes, str]:
+        audio = await self._tts.synthesize(sentence)
         return await encode_audio(
             audio, encoding=self._audio_encoding,
             bitrate_kbps=self._audio_bitrate_kbps,
@@ -323,6 +305,10 @@ class WebChatService:
             "mime_type": mime_type,
             "index": index,
         }
+
+
+# Compatibility name for CLI integrations and existing callers.
+WebChatService = LiveConversation
 
 
 def _default_service(config: AppConfig | None = None) -> WebChatService:
@@ -424,9 +410,33 @@ def create_app(
         else None
     )
 
+    async def finalize_pending_memory(session_id: str, session: _SessionState) -> None:
+        """Persist user memory only after this turn's audio has settled."""
+        if session_store is None or session.pending_memory_text is None:
+            return
+        text = session.pending_memory_text
+        try:
+            messages = session.conversation.get_messages()
+            source_seq = next(
+                (i for i in range(len(messages) - 1, -1, -1) if messages[i]["role"] == "user"),
+                None,
+            )
+            # SQLite 写入走线程，不占事件循环；失败不影响本轮对话。
+            await asyncio.to_thread(
+                session_store.remember_user_message,
+                session_id,
+                text,
+                source_seq=source_seq,
+            )
+            session.pending_memory_text = None
+            session.pending_memory_turn_id = None
+        except Exception:
+            logger.exception("Failed to remember user message for session %s", session_id)
+
     def evict_oldest_idle_session() -> bool:
         for candidate_id, candidate in tuple(sessions.items()):
-            if candidate.reservations == 0 and not candidate.lock.locked():
+            if (candidate.reservations == 0 and not candidate.lock.locked()
+                    and candidate.pending_memory_text is None):
                 sessions.pop(candidate_id)
                 return True
         return False
@@ -440,30 +450,18 @@ def create_app(
         if state is None:
             # Busy sessions may temporarily put the cache above its target;
             # preserving an active history is more important than a hard cap.
-            while len(sessions) >= max_sessions:
-                if not evict_oldest_idle_session():
-                    break
-            state = _SessionState(
-                conversation=Conversation(
-                    recent_turns=(runtime_config.max_turns if runtime_config else 8),
-                    summary_trigger_turns=(
-                        runtime_config.summary_trigger_turns
-                        if runtime_config
-                        else 12
-                    ),
-                    summary_trigger_chars=(
-                        runtime_config.summary_trigger_chars
-                        if runtime_config
-                        else 12_000
-                    ),
-                    summary_max_chars=(
-                        runtime_config.summary_max_chars
-                        if runtime_config
-                        else 1_800
-                    ),
-                ),
-                lock=asyncio.Lock(),
-            )
+            while len(sessions) >= max_sessions and evict_oldest_idle_session():
+                pass
+            if runtime_config is not None:
+                conversation = Conversation(
+                    recent_turns=runtime_config.recent_turns,
+                    summary_trigger_turns=runtime_config.summary_trigger_turns,
+                    summary_trigger_chars=runtime_config.summary_trigger_chars,
+                    summary_max_chars=runtime_config.summary_max_chars,
+                )
+            else:
+                conversation = Conversation()
+            state = _SessionState(conversation=conversation, lock=asyncio.Lock())
             if session_store is not None:
                 snapshot = session_store.load(session_id)
                 if snapshot is not None:
@@ -585,8 +583,63 @@ def create_app(
                     warning.update(v=2, turn_id=turn_id)
                 return sse_event(warning)
 
+            def finalize_turn(event: dict, turn: Turn, ledger: PlaybackLedger) -> None:
+                """done/interrupted：对账历史、收敛 ledger、落 turn 状态。"""
+                history = session.conversation.get_messages()
+                if (ledger.sentences and history and history[-1]["role"] == "assistant"
+                        and history[-1]["content"] == "".join(ledger.sentences)):
+                    ledger.committed_text = history[-1]["content"]
+                if event["type"] == "interrupted":
+                    ledger.cancel()
+                ledger.trim(session.conversation)
+                event["sentence_count"] = len(ledger.sentences)
+                status = (
+                    TurnStatus.INTERRUPTED
+                    if event["type"] == "interrupted"
+                    else TurnStatus.DONE
+                )
+                turn.finish(status, played_indices=ledger.settled)
+                if session_store is not None:
+                    session_store.finish_turn(
+                        session_id, turn_id, status.value, ledger.settled
+                    )
+
+            def persist_history() -> str | None:
+                """落盘本轮历史；失败时返回给用户的警告文案。"""
+                if session_store is None:
+                    return None
+                try:
+                    session_store.save(session_id, session.conversation)
+                except Exception:
+                    logger.exception("Failed to persist session %s", session_id)
+                    return "本轮对话未保存，重启后可能丢失。"
+                return None
+
+            async def settle_memory(kind: str, ledger: PlaybackLedger | None) -> None:
+                """done 后的用户记忆：无回执通道或音频全部确认才写，否则挂起等回执。"""
+                history = session.conversation.get_messages()
+                if not (kind == "done" and history and history[-1]["role"] == "assistant"):
+                    return
+                session.pending_memory_text = message
+                session.pending_memory_turn_id = turn_id
+                # v1 没有 /api/playback 回执通道；本轮无音频也不需要等。
+                if ledger is None or not ledger.audio or ledger.audio.issubset(ledger.settled):
+                    await finalize_pending_memory(session_id, session)
+
             try:
                 async with session.lock:
+                    session.generation += 1
+                    turn = Turn(
+                        TurnRequest(
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            user_text=message,
+                            generation=session.generation,
+                        )
+                    )
+                    session.active_turn = turn
+                    if session_store is not None:
+                        session_store.begin_turn(session_id, turn_id, session.generation, message)
                     if session.playback is not None:
                         session.playback.trim(session.conversation)
                     ledger = PlaybackLedger(turn_id) if v2 else None
@@ -612,38 +665,33 @@ def create_app(
                             elif kind == "performance":
                                 event["revision"] = 0 if event["source"] == "speaking_style" else 1
                             elif kind in {"done", "interrupted"}:
-                                history = session.conversation.get_messages()
-                                if (ledger.sentences and history and history[-1]["role"] == "assistant"
-                                        and history[-1]["content"] == "".join(ledger.sentences)):
-                                    ledger.committed_text = history[-1]["content"]
-                                if kind == "interrupted":
-                                    ledger.cancel()
-                                ledger.trim(session.conversation)
-                                event["sentence_count"] = len(ledger.sentences)
+                                finalize_turn(event, turn, ledger)
                         if event["type"] in {"done", "interrupted"}:
                             terminal_seen = True
-                            if session_store is not None:
-                                try:
-                                    session_store.save(session_id, session.conversation)
-                                except Exception:
-                                    logger.exception("Failed to persist session %s", session_id)
-                                    yield storage_warning("本轮对话未保存，重启后可能丢失。")
-                                else:
-                                    history = session.conversation.get_messages()
-                                    if event["type"] == "done" and history and history[-1]["role"] == "assistant":
-                                        try:
-                                            session_store.remember_user_message(session_id, message)
-                                        except Exception:
-                                            logger.exception("Failed to remember user message for session %s", session_id)
-                                            yield storage_warning("本轮对话已保存，但关于你的记忆未保存。")
+                            warning = persist_history()
+                            if warning is not None:
+                                yield storage_warning(warning)
+                            else:
+                                await settle_memory(event["type"], ledger)
                         yield sse_event(event)
+                    session.active_turn = None
                     if ledger is not None:
                         ledger.trim(session.conversation)
-                    if session_store is not None and not terminal_seen:
-                        try:
-                            session_store.save(session_id, session.conversation)
-                        except Exception:
-                            logger.exception("Failed to persist session %s after stream exit", session_id)
+                    if not terminal_seen:
+                        # 流没给终止事件（中途异常退出）：补落历史并标 FAILED。
+                        if session_store is not None:
+                            try:
+                                session_store.save(session_id, session.conversation)
+                            except Exception:
+                                logger.exception(
+                                    "Failed to persist session %s after stream exit",
+                                    session_id,
+                                )
+                        turn.finish(TurnStatus.FAILED)
+                        if session_store is not None:
+                            session_store.finish_turn(
+                                session_id, turn_id, TurnStatus.FAILED.value, set()
+                            )
             finally:
                 session.reservations -= 1
                 trim_idle_sessions()
@@ -702,7 +750,7 @@ def create_app(
             payload = await request.json()
             session_id = parse_session_id(payload)
             index, seq, kind = payload.get("index"), payload.get("event_seq"), payload.get("kind")
-            if type(index) is not int or index < 0 or type(seq) is not int or seq < 0 or kind not in {"started", "ended"}:
+            if type(index) is not int or index < 0 or type(seq) is not int or seq < 0 or kind not in {"started", "ended", "failed"}:
                 raise ValueError("invalid playback acknowledgement")
             session = sessions.get(session_id)
             ledger = session.playback if session else None
@@ -710,6 +758,8 @@ def create_app(
                 return {"status": "stale"}
             # No await while changing the ledger: atomic with stream handling on this loop.
             ledger.acknowledge(index, seq, kind)
+            if kind in {"ended", "failed"} and ledger.audio.issubset(ledger.settled):
+                await finalize_pending_memory(session_id, session)
         except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"status": "ok"}

@@ -1,14 +1,16 @@
-import type { ChatEvent, HealthStatus } from "../types";
+import { EMOTIONS, MOTIONS, type ChatEvent, type HealthStatus } from "../types";
 
 /** discriminated-union type guard：JSON.parse 返回 unknown，禁 any 下必须窄化。 */
 export function isChatEvent(value: unknown): value is ChatEvent {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   const index = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  const oneOf = <T extends readonly string[]>(set: T, value: unknown) =>
+    (set as readonly string[]).includes(String(value));
   if (v.v !== 2 || typeof v.turn_id !== "string" || !v.turn_id) return false;
   switch (v.type) {
     case "sentence":
-      return typeof v.text === "string" && index(v.index) && (v.motion === null || ["点头", "摇头", "歪头"].includes(String(v.motion)))
+      return typeof v.text === "string" && index(v.index) && (v.motion === null || oneOf(MOTIONS, v.motion))
         && (v.pause_ms === undefined || [0, 300, 700, 1200].includes(Number(v.pause_ms)));
     case "audio":
       return typeof v.audio === "string" && index(v.index)
@@ -25,7 +27,7 @@ export function isChatEvent(value: unknown): value is ChatEvent {
     case "interrupted":
       return true;
     case "performance":
-      return ["日常", "元气", "温柔", "俏皮", "倔强", "惊讶"].includes(String(v.emotion))
+      return oneOf(EMOTIONS, v.emotion)
         && index(v.revision)
         && typeof v.intensity === "number" && Number.isFinite(v.intensity) && v.intensity >= 0 && v.intensity <= 1
         && typeof v.confidence === "number" && Number.isFinite(v.confidence) && v.confidence >= 0 && v.confidence <= 1
@@ -106,7 +108,7 @@ export async function resetSession(sessionId: string): Promise<void> {
 }
 
 /** 让路：请后端停掉该会话正在说的这轮话。没人在说也无害。 */
-export async function interruptSession(sessionId: string, turnId?: string, highestStarted = -1, startedIndices?: number[]): Promise<void> {
+export async function interruptSession(sessionId: string, turnId: string, highestStarted: number, startedIndices: number[]): Promise<void> {
   await fetch("/api/interrupt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -120,13 +122,17 @@ export async function fetchHealth(): Promise<HealthStatus> {
   return (await response.json()) as HealthStatus;
 }
 
-export async function fetchHistory(sessionId: string): Promise<{ messages: { role: "user" | "assistant"; content: string }[] }> {
-  const response = await fetch(`/api/history?session_id=${encodeURIComponent(sessionId)}`);
-  if (!response.ok) throw new Error("读取历史失败");
-  return response.json() as Promise<{ messages: { role: "user" | "assistant"; content: string }[] }>;
+interface HistoryResponse {
+  messages: { role: "user" | "assistant"; content: string }[];
 }
 
-export async function acknowledgePlayback(sessionId: string, turnId: string, index: number, eventSeq: number, kind: "started" | "ended"): Promise<void> {
+export async function fetchHistory(sessionId: string): Promise<HistoryResponse> {
+  const response = await fetch(`/api/history?session_id=${encodeURIComponent(sessionId)}`);
+  if (!response.ok) throw new Error("读取历史失败");
+  return response.json();
+}
+
+export async function acknowledgePlayback(sessionId: string, turnId: string, index: number, eventSeq: number, kind: "started" | "ended" | "failed"): Promise<void> {
   await fetch("/api/playback", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, turn_id: turnId, index, event_seq: eventSeq, kind }),
@@ -146,7 +152,7 @@ export interface MemoryState { enabled: boolean; memories: UserMemory[] }
 export async function fetchMemories(sessionId: string): Promise<MemoryState> {
   const response = await fetch(`/api/memories?session_id=${encodeURIComponent(sessionId)}`);
   if (!response.ok) throw new Error("读取记忆失败");
-  return response.json() as Promise<MemoryState>;
+  return response.json();
 }
 
 export async function setMemoriesEnabled(sessionId: string, enabled: boolean): Promise<MemoryState> {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, ChatEvent } from "../types";
 import { acknowledgePlayback, fetchHealth, fetchHistory, interruptSession, resetSession, streamChat } from "../api/client";
-import type { QueueItem } from "./useAudioQueue";
+import { audioKey, type QueueItem } from "./useAudioQueue";
 
 export type Status =
   | "online"
@@ -79,6 +79,14 @@ export function useChat({ enqueueAudio, onEvent, onTurn, onCancel }: UseChatOpti
     return () => { active = false; };
   }, []);
 
+  /** 停掉后端正在说的这轮话：取消本地播放并通知服务端（失败静默）。 */
+  const stopBackendTurn = useCallback(async () => {
+    const turnId = turnRef.current;
+    if (!turnId) return;
+    onCancel();
+    await interruptSession(sessionIdRef.current, turnId, highestStarted.current, [...startedIndices.current]).catch(() => {});
+  }, [onCancel]);
+
   const send = useCallback(
     async (raw: string) => {
       const message = raw.trim();
@@ -87,10 +95,7 @@ export function useChat({ enqueueAudio, onEvent, onTurn, onCancel }: UseChatOpti
       interruptRef.current = false;
       setBusy(true);
       setStatus("generating");
-      if (turnRef.current) {
-        onCancel();
-        await interruptSession(sessionIdRef.current, turnRef.current, highestStarted.current, [...startedIndices.current]).catch(() => {});
-      }
+      await stopBackendTurn();
       const seen = new Set<string>();
       const userMessage: ChatMessage = {
         id: newId(),
@@ -131,11 +136,9 @@ export function useChat({ enqueueAudio, onEvent, onTurn, onCancel }: UseChatOpti
               ),
             );
           } else if (event.type === "audio") {
-            // 已让路的轮：迟到的音频不再入队（淡出后再自动播放就穿帮了）
-            if (interruptRef.current) continue;
             const url = `data:${event.mime_type ?? "audio/wav"};base64,${event.audio}`;
             // 动作不在事件到达时触发，而是搭在对应句的音频上，起播瞬间才动
-            enqueueAudio({ key: `${assistantId}:${event.index}`, url, turnId: assistantId, index: event.index, pauseMs: pauses.current.get(event.index) ?? 0 });
+            enqueueAudio({ key: audioKey(assistantId, event.index), url, turnId: assistantId, index: event.index, pauseMs: pauses.current.get(event.index) ?? 0 });
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId ? { ...m, audio: Object.assign([...m.audio], { [event.index]: { url } }) } : m,
@@ -178,18 +181,17 @@ export function useChat({ enqueueAudio, onEvent, onTurn, onCancel }: UseChatOpti
         setBusy(false);
       }
     },
-    [enqueueAudio, onEvent, onTurn, onCancel],
+    [enqueueAudio, onEvent, onTurn, onCancel, stopBackendTurn],
   );
 
   /** 让路：请后端停掉正在说的这轮话；本轮后续音频不再入队。 */
   const interrupt = useCallback(async () => {
     if (!turnRef.current || interruptRef.current) return;
     interruptRef.current = true;
-    onCancel();
-    await interruptSession(sessionIdRef.current, turnRef.current, highestStarted.current, [...startedIndices.current]).catch(() => {});
-  }, [onCancel]);
+    await stopBackendTurn();
+  }, [stopBackendTurn]);
 
-  const reportPlayback = useCallback((turnId: string, index: number, kind: "started" | "ended") => {
+  const reportPlayback = useCallback((turnId: string, index: number, kind: "started" | "ended" | "failed") => {
     if (turnId !== turnRef.current || interruptRef.current) return;
     startedIndices.current.add(index);
     highestStarted.current = Math.max(highestStarted.current, index);

@@ -1,4 +1,5 @@
 import type { ChatMessage as ChatMessageModel } from "../types";
+import { audioKey } from "../hooks/useAudioQueue";
 import { AudioPlayer } from "./AudioPlayer";
 import styles from "./ChatMessage.module.css";
 
@@ -23,9 +24,9 @@ export function ChatMessage({
         {message.warning && <div className={styles.warning} role="status">{message.warning}</div>}
         {message.audio.map((audio, index) => (
           <AudioPlayer
-            key={`${message.id}:${index}`}
+            key={audioKey(message.id, index)}
             item={audio}
-            active={activeKey === `${message.id}:${index}`}
+            active={activeKey === audioKey(message.id, index)}
             isPlaying={isPlaying}
             waveform={waveform}
             currentTime={currentTime}

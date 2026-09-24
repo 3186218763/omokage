@@ -3,11 +3,9 @@
 import asyncio
 from collections.abc import AsyncIterator
 
+from .context_builder import ContextBuilder
 from .conversation import Conversation
-from .memory import prepare_chat_messages
-from .motion import MotionPolicy
-from .sentence_streamer import SentenceStreamer
-from .speaking_style import SpeakingStyleRefBank, StylePrefixParser
+from .sentence_pipeline import SentencePipeline
 from .speech_text import normalize_speech_text, strip_style_for_history
 
 
@@ -26,15 +24,12 @@ class Orchestrator:
         audio_player,
         max_chars: int = 50,
         min_chars: int = 4,
-        *,
-        style_ref_bank: SpeakingStyleRefBank | None = None,
     ):
         self._llm = llm_client
         self._tts = tts_client
         self._player = audio_player
         self._max_chars = max_chars
         self._min_chars = min_chars
-        self._style_bank = style_ref_bank or SpeakingStyleRefBank()
 
     async def chat(
         self, user_text: str, conversation: Conversation
@@ -43,12 +38,8 @@ class Orchestrator:
         conversation.add_user_message(user_text)
         committed = False
         try:
-            messages = await prepare_chat_messages(self._llm, conversation)
-            streamer = SentenceStreamer(self._max_chars, min_chars=self._min_chars)
-            style_parser = StylePrefixParser()
-            motion_policy = MotionPolicy()
-            full_speech = ""
-            ref_kwargs: dict[str, str] = {}
+            messages = await ContextBuilder(self._llm).build(conversation)
+            pipeline = SentencePipeline(self._max_chars, min_chars=self._min_chars)
 
             tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
             audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
@@ -60,7 +51,7 @@ class Orchestrator:
                         if sentence is None:
                             break
                         try:
-                            audio = await self._tts.synthesize(sentence, **ref_kwargs)
+                            audio = await self._tts.synthesize(sentence)
                         except Exception:
                             # TTS failures do not discard the text response or
                             # prevent later sentences from being processed.
@@ -84,44 +75,14 @@ class Orchestrator:
             response_ready = False
             try:
                 async for token in self._llm.stream_chat(messages):
-                    speech_chunk = style_parser.feed(token)
-                    if style_parser.resolved and not ref_kwargs:
-                        clip = self._style_bank.resolve(style_parser.style)
-                        if clip is not None:
-                            ref_kwargs = {
-                                "ref_audio_path": clip.audio_path,
-                                "ref_text": clip.prompt_text,
-                                "ref_language": clip.prompt_lang,
-                            }
-                    if not speech_chunk:
-                        continue
-                    full_speech += speech_chunk
-                    for raw_sentence in streamer.add_token(speech_chunk):
-                        _, stripped = motion_policy.take(raw_sentence)
-                        sentence = normalize_speech_text(stripped)
-                        if sentence:
-                            await tts_queue.put(sentence)
-                            yield sentence
-
-                tail = style_parser.flush()
-                if tail:
-                    full_speech += tail
-                    for raw_sentence in streamer.add_token(tail):
-                        _, stripped = motion_policy.take(raw_sentence)
-                        sentence = normalize_speech_text(stripped)
-                        if sentence:
-                            await tts_queue.put(sentence)
-                            yield sentence
-
-                remaining = streamer.flush()
-                if remaining:
-                    _, stripped = motion_policy.take(remaining)
-                    sentence = normalize_speech_text(stripped)
-                    if sentence:
-                        await tts_queue.put(sentence)
-                        yield sentence
+                    for utterance in pipeline.feed(token):
+                        await tts_queue.put(utterance.text)
+                        yield utterance.text
+                for utterance in pipeline.close():
+                    await tts_queue.put(utterance.text)
+                    yield utterance.text
                 normalized_response = normalize_speech_text(
-                    strip_style_for_history(full_speech)
+                    strip_style_for_history(pipeline.speech_text)
                 )
                 if normalized_response is None:
                     raise RuntimeError("LLM returned an empty response")

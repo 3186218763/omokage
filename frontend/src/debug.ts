@@ -3,20 +3,13 @@
 import { mountStage, type StageController } from "./live2d/stage";
 import { Live2DRenderer } from "@soullink-emotion/live2d-pixi";
 import { blendParams } from "./live2d/blend";
+import { EMOTIONS, MOTIONS, type Live2DManifest as Manifest } from "./types";
 
-interface Manifest {
-  model_url?: string;
-  core_url?: string;
-  background_url?: string | null;
-}
-
-const EMOTIONS = ["日常", "元气", "温柔", "俏皮", "倔强", "惊讶"] as const;
 const INTENSITIES: Array<[string, number]> = [
   ["mild 0.6", 0.6],
   ["moderate 0.9", 0.9],
   ["strong 1.0", 1.0],
 ];
-const MOTIONS = ["点头", "摇头", "歪头"] as const;
 
 // Hiyori model3.json 的动作组。Idle 组 index 0-8 → m01,m02,m03,m05..m10；TapBody → m04。
 const NATIVE_MOTIONS: Array<{ group: string; index: number; label: string; duration: number }> = [
@@ -218,12 +211,8 @@ function buildNativePanel(manifest: Manifest) {
     });
 
   let raf = 0;
-  let last = performance.now();
   const frame = (now: number) => {
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
     renderer.setParameters(blendParams("日常", 0.55, now / 1000, 0));
-    void dt;
     raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
@@ -370,10 +359,7 @@ function buildProtoPanel(manifest: Manifest) {
   let curve: ProtoCurve | null = null;
   let curveStart = 0;
   let raf = 0;
-  let last = performance.now();
   const frame = (now: number) => {
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
     const params = blendParams("日常", 0.55, now / 1000, readMouth());
     if (curve) {
       const offsets = curve.offsetAt((now - curveStart) / 1000);
@@ -381,7 +367,6 @@ function buildProtoPanel(manifest: Manifest) {
       else for (const [key, value] of Object.entries(offsets)) params[key] = (params[key] ?? 0) + value;
     }
     renderer.setParameters(params);
-    void dt;
     raf = requestAnimationFrame(frame);
   };
 

@@ -18,12 +18,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import time
-from difflib import SequenceMatcher
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -50,26 +48,15 @@ MID_MIN = 0.60
 MID_MAX = 0.85
 AGREE = 0.85
 
-_PUNCT_RE = re.compile(r"[\s，。！？、；：…,.!?;:·~～\-_/\\|()（）「」『』【】\"'“”]+")
+from consensus_transcript_lib import compact_text, similarity
 
 
 def compact(text: str) -> str:
-    try:
-        from zhconv import convert
-
-        text = convert(text or "", "zh-cn")
-    except Exception:
-        pass
-    return _PUNCT_RE.sub("", text or "")
+    return compact_text(text, lang="zh")
 
 
 def sim(a: str, b: str) -> float:
-    x, y = compact(a), compact(b)
-    if not x and not y:
-        return 1.0
-    if not x or not y:
-        return 0.0
-    return SequenceMatcher(None, x, y).ratio()
+    return similarity(a, b, lang="zh")
 
 
 def decide(entry: dict, t3: str | None) -> dict:

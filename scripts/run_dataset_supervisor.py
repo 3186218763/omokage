@@ -6,7 +6,6 @@ import argparse
 import subprocess
 import sys
 import time
-import wave
 from pathlib import Path
 
 
@@ -17,13 +16,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import build_dataset as pipeline
 
-
-def _wav_duration(path: Path) -> float:
-    try:
-        with wave.open(str(path), "rb") as audio:
-            return audio.getnframes() / audio.getframerate()
-    except (OSError, EOFError, wave.Error, ZeroDivisionError):
-        return 0.0
+# 复用管线里的 WAV 时长读取（supervisor 已把 build_dataset 当库用）
+_wav_duration = pipeline._wav_duration
 
 
 def _vocal_output(source: Path) -> Path | None:
