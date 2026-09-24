@@ -8,12 +8,13 @@
 ## 功能特性
 
 - **Live2D 舞台**：整页只有模型。她的台词在底部对话框里按正在说的那一句弹出，语音同步播放；左上角「记录」打开这一段对话。口型跟正在播放的合成音，表演情绪先跟说话语气，本地 Kev（或托管 Jev）返回后再覆盖。决策题是英文，映射回中文闭集。缺模型时占位为「菜」。资产说明见 [`resources/live2d/README.md`](resources/live2d/README.md)
-- **句级动作**：LLM 按闭集（点头/摇头/歪头）在句前自标 `【动作:点头】` 一类标签（不朗读、不进 UI、不进历史），前端在对应句起幅做程序化动作，叠加在表演情绪底色上；一轮至多 2 个、相邻不重词，服务端强制执行
+- **句级动作**：LLM 按闭集（点头/摇头/歪头）在句前自标 `【动作:点头】` 一类标签（不朗读、不进 UI、不进历史），前端在对应句起幅做程序化动作，叠加在表演情绪底色上；动作可在同一轮按句重复，服务端按句绑定并清洗
 - **打断（让路）**：她说话时点麦克风开口或点舞台，当前语音 ~200ms 淡出、本轮剩余合成与生成停止；已说出的句子照常进对话历史（她说过的算说过），与断连回滚是两种语义
 - **流式语音对话**：LLM 边生成、TTS 边合成、喇叭边播放，asyncio 三段流水线并行，首音延迟低
 - **长对话记忆**：最近 `recent_turns` 轮保留原文，更早历史滚动压缩为 LLM 摘要，可支撑数百轮对话
+- **本机会话恢复**：Web 对话与摘要默认保存在 `data/sessions.db`，重启后恢复文本记录；「记录」面板可单独启用用户自述记忆并逐条删除，清空会话会同时删除记忆。落盘模式仅供本机访问
 - **自然语音切分**：按句末标点 / 逗号 / 空格切句，保护括号动作与引用
-- **CLI 与 Web 双前端**：CLI 本地播放；Web（React + TypeScript）是整页 Live2D，SSE 流式台词进对话框，WAV 同步播放，浏览器录音（faster-whisper 本地转写）
+- **CLI 与 Web 双前端**：CLI 本地播放；Web（React + TypeScript）是整页 Live2D，SSE 流式台词进对话框，默认 WAV，可选 MP3 下行，浏览器录音（faster-whisper 本地转写）
 - **训练数据管线**：白名单采集 → 人声分离 → 静音切分 → 歌声/能量过滤 → 声纹过滤 → ASR 转写 → 音文一致性校验，全阶段增量断点续跑
 - **无头训练**：导出 `dataset_precision` 为 Style-Bert-VITS2 布局后微调（resample → 文本 → BERT/style → train_ms）
 - **专属声音 API**：`POST /tts {"text": "你好"}` 永远是花音这一条声线，调用方不能换说话人
@@ -36,6 +37,8 @@ cp configs/config.example.yaml configs/config.yaml
 ```
 
 **TTS 配方：** [`configs/huayin_sbv2.yaml`](configs/huayin_sbv2.yaml)
+
+运行时人设由 [`configs/huayin_card.yaml`](configs/huayin_card.yaml) 加载；修改 prompt 前先更新 [`docs/persona/persona-spec.md`](docs/persona/persona-spec.md)，可用 `python scripts/check_character_card.py` 验证引用资产。
 
 ### 3. 启动 Style-Bert-VITS2 TTS 服务
 
@@ -75,7 +78,7 @@ cd .. && python -m frontend.web --host 127.0.0.1 --port 8000
 python scripts/test_huayin_tts.py "你好，今天也要加油。"
 ```
 
-完整部署说明（局域网访问、健康检查字段、录音功能）见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。
+Web 会话默认落在 `data/sessions.db`（不入库），在「记录」中清空会话会删除对应消息与用户记忆；如需纯内存模式，设 `conversation.database_path: ""`。使用 `streaming.audio_encoding: mp3` 需要 ffmpeg，缺失时自动回落 WAV。落盘模式的 CLI 只允许本机监听；局域网部署需先提供鉴权方案。
 
 ## 项目结构
 
@@ -92,7 +95,7 @@ python scripts/test_huayin_tts.py "你好，今天也要加油。"
 │   ├── sentence_streamer.py     # token 流 → 自然边界句子切分
 │   ├── orchestrator.py          # LLM→切句→TTS→播放 的 asyncio 流水线
 │   ├── audio_player.py          # sounddevice 播放（桌面端可选依赖）
-│   ├── persona.py               # 花音人设 system prompt
+│   ├── persona.py               # 从花音角色卡加载 system prompt
 │   └── speech_text.py           # 台词清洗：去 Markdown/括号动作/角色名前缀
 ├── frontend/
 │   ├── src/                     # React + TypeScript 前端源码
@@ -130,7 +133,7 @@ python scripts/test_huayin_tts.py "你好，今天也要加油。"
 **流水线**：`Orchestrator.chat()` 中 LLM 流式输出 → 切句 → `tts_queue` 合成（失败只跳过
 该句音频）→ `audio_queue` 顺序播放；LLM 异常时回滚当前用户消息。Web 端每个
 `session_id` 有独立 `asyncio.Lock`，同一会话请求严格串行，SSE 事件类型：
-`sentence` / `motion` / `audio`（base64 WAV）/ `performance` / `interrupted` / `done` / `error` / `audio_error`。
+`sentence`（含对应句的 `motion` 元数据）/ `audio`（base64 WAV）/ `performance` / `interrupted` / `done` / `error` / `audio_error`。
 打断是独立信号（`POST /api/interrupt`），不抢会话锁：正在流式的一轮在句边界停下，
 部分回复进历史；客户端断连仍整轮回滚。
 

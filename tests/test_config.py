@@ -72,6 +72,13 @@ def test_load_config_rejects_out_of_range_prefetch_depth(tmp_path):
         load_config(str(path))
 
 
+def test_load_config_rejects_invalid_audio_encoding(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(_base_yaml() + "\nstreaming:\n  audio_encoding: ogg\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="audio_encoding"):
+        load_config(str(path))
+
+
 def test_load_config_reads_asr_settings(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .speaking_style import normalize_speaking_style
@@ -90,7 +91,7 @@ def vad_for(emotion: str) -> tuple[float, float, float]:
 
 
 def intensity_from_choice(choice: str | None) -> float:
-    if not choice:
+    if not isinstance(choice, str):
         return DEFAULT_INTENSITY
     return INTENSITY_BY_CHOICE.get(choice.strip(), DEFAULT_INTENSITY)
 
@@ -127,8 +128,11 @@ def from_jev_choice(
     label = emotion_from_choice(emotion)
     if label is None:
         return None
-    score = 0.0 if confidence is None else float(confidence)
-    if score < min_confidence:
+    try:
+        score = float(confidence)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if isinstance(confidence, bool) or not math.isfinite(score) or not 0 <= score <= 1 or score < min_confidence:
         return None
     return PerformanceDecision(
         emotion=label,

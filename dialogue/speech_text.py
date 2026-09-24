@@ -6,12 +6,13 @@ import re
 import unicodedata
 
 from .motion import strip_motion_tags
+from .pause import strip_pause_tags
 from .speaking_style import strip_speaking_style_prefix
 
 
 def strip_style_for_history(text: str) -> str:
     """Remove speaking-style and motion control tags before history save."""
-    return strip_motion_tags(strip_speaking_style_prefix(text))
+    return strip_pause_tags(strip_motion_tags(strip_speaking_style_prefix(text)))
 
 
 _CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```|~~~[\s\S]*?~~~")
@@ -207,6 +208,7 @@ def normalize_speech_text(text: str) -> str | None:
         return None
 
     normalized = strip_speaking_style_prefix(text)
+    normalized = strip_pause_tags(normalized)
     normalized = _CODE_BLOCK_RE.sub(" ", normalized)
     normalized = _HTML_BLOCK_RE.sub(" ", normalized)
     normalized = _HTML_TAG_RE.sub(" ", normalized)

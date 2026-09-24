@@ -1,0 +1,1018 @@
+{
+  "model": "kev-latest",
+  "min_confidence": 0.4,
+  "timeout_seconds": 2.0,
+  "warmup_ms": 371.35958002181724,
+  "warmup_accepted": true,
+  "summary": {
+    "total": 60,
+    "accepted": 50,
+    "expected_match": 49,
+    "p50_ms": 210.335,
+    "p95_ms": 231.71
+  },
+  "note": "Engineering expectations only; not human blind review. No LLM or TTS in this measurement.",
+  "results": [
+    {
+      "id": "日常-01",
+      "scene": "日常",
+      "elapsed_ms": 206.34,
+      "decision": {
+        "emotion": "元气",
+        "intensity": 0.9,
+        "confidence": 0.5056,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "元气",
+        "日常"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-02",
+      "scene": "日常",
+      "elapsed_ms": 204.39,
+      "decision": {
+        "emotion": "日常",
+        "intensity": 0.9,
+        "confidence": 0.4806,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "日常",
+        "俏皮"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-03",
+      "scene": "日常",
+      "elapsed_ms": 205.54,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.6622,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "日常",
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-04",
+      "scene": "日常",
+      "elapsed_ms": 223.61,
+      "decision": {
+        "emotion": "日常",
+        "intensity": 0.9,
+        "confidence": 0.4581,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "日常",
+        "元气"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-05",
+      "scene": "日常",
+      "elapsed_ms": 225.26,
+      "decision": {
+        "emotion": "元气",
+        "intensity": 0.9,
+        "confidence": 0.4499,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔",
+        "日常"
+      ],
+      "acceptable": false
+    },
+    {
+      "id": "日常-06",
+      "scene": "日常",
+      "elapsed_ms": 228.21,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.7916,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔",
+        "日常"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-07",
+      "scene": "日常",
+      "elapsed_ms": 223.89,
+      "decision": {
+        "emotion": "元气",
+        "intensity": 0.9,
+        "confidence": 0.926,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "元气"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-08",
+      "scene": "日常",
+      "elapsed_ms": 224.88,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "日常",
+        "温柔"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "日常-09",
+      "scene": "日常",
+      "elapsed_ms": 237.75,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.7531,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-10",
+      "scene": "日常",
+      "elapsed_ms": 231.06,
+      "decision": {
+        "emotion": "日常",
+        "intensity": 0.9,
+        "confidence": 0.5092,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "日常",
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-11",
+      "scene": "日常",
+      "elapsed_ms": 230.83,
+      "decision": {
+        "emotion": "日常",
+        "intensity": 0.9,
+        "confidence": 0.4081,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "日常",
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-12",
+      "scene": "日常",
+      "elapsed_ms": 242.93,
+      "decision": {
+        "emotion": "元气",
+        "intensity": 0.9,
+        "confidence": 0.7156,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "元气",
+        "日常"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-13",
+      "scene": "日常",
+      "elapsed_ms": 231.71,
+      "decision": {
+        "emotion": "元气",
+        "intensity": 0.9,
+        "confidence": 0.6408,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "元气",
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-14",
+      "scene": "日常",
+      "elapsed_ms": 204.71,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "日常",
+        "俏皮"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "日常-15",
+      "scene": "日常",
+      "elapsed_ms": 211.05,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.6927,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-16",
+      "scene": "日常",
+      "elapsed_ms": 229.25,
+      "decision": {
+        "emotion": "元气",
+        "intensity": 0.9,
+        "confidence": 0.8413,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "元气",
+        "日常"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-17",
+      "scene": "日常",
+      "elapsed_ms": 232.78,
+      "decision": {
+        "emotion": "日常",
+        "intensity": 0.9,
+        "confidence": 0.7591,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "日常"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-18",
+      "scene": "日常",
+      "elapsed_ms": 228.16,
+      "decision": {
+        "emotion": "元气",
+        "intensity": 0.9,
+        "confidence": 0.6791,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "元气",
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "日常-19",
+      "scene": "日常",
+      "elapsed_ms": 225.67,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "日常",
+        "温柔",
+        "惊讶"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "日常-20",
+      "scene": "日常",
+      "elapsed_ms": 227.96,
+      "decision": {
+        "emotion": "元气",
+        "intensity": 0.9,
+        "confidence": 0.4846,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "元气",
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-01",
+      "scene": "沉重",
+      "elapsed_ms": 224.11,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9129,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-02",
+      "scene": "沉重",
+      "elapsed_ms": 229.63,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9456,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-03",
+      "scene": "沉重",
+      "elapsed_ms": 227.12,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9621,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-04",
+      "scene": "沉重",
+      "elapsed_ms": 221.96,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9666,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-05",
+      "scene": "沉重",
+      "elapsed_ms": 227.99,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.8535,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-06",
+      "scene": "沉重",
+      "elapsed_ms": 219.28,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9547,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-07",
+      "scene": "沉重",
+      "elapsed_ms": 222.7,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9505,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-08",
+      "scene": "沉重",
+      "elapsed_ms": 214.66,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.7748,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-09",
+      "scene": "沉重",
+      "elapsed_ms": 227.72,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.7821,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-10",
+      "scene": "沉重",
+      "elapsed_ms": 226.17,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9736,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-11",
+      "scene": "沉重",
+      "elapsed_ms": 221.47,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.7675,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-12",
+      "scene": "沉重",
+      "elapsed_ms": 209.62,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9461,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-13",
+      "scene": "沉重",
+      "elapsed_ms": 217.98,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.8237,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-14",
+      "scene": "沉重",
+      "elapsed_ms": 207.85,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9347,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-15",
+      "scene": "沉重",
+      "elapsed_ms": 203.18,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.867,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-16",
+      "scene": "沉重",
+      "elapsed_ms": 202.54,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.84,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-17",
+      "scene": "沉重",
+      "elapsed_ms": 202.07,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.8619,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-18",
+      "scene": "沉重",
+      "elapsed_ms": 202.37,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.874,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-19",
+      "scene": "沉重",
+      "elapsed_ms": 204.49,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.9574,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "沉重-20",
+      "scene": "沉重",
+      "elapsed_ms": 200.41,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.8578,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-01",
+      "scene": "玩笑",
+      "elapsed_ms": 202.06,
+      "decision": {
+        "emotion": "倔强",
+        "intensity": 0.9,
+        "confidence": 0.712,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "倔强",
+        "俏皮"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-02",
+      "scene": "玩笑",
+      "elapsed_ms": 200.49,
+      "decision": {
+        "emotion": "倔强",
+        "intensity": 0.9,
+        "confidence": 0.8746,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "倔强",
+        "俏皮"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-03",
+      "scene": "玩笑",
+      "elapsed_ms": 201.11,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "惊讶",
+        "倔强",
+        "俏皮"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "玩笑-04",
+      "scene": "玩笑",
+      "elapsed_ms": 202.58,
+      "decision": {
+        "emotion": "俏皮",
+        "intensity": 0.9,
+        "confidence": 0.6778,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "俏皮"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-05",
+      "scene": "玩笑",
+      "elapsed_ms": 201.1,
+      "decision": {
+        "emotion": "俏皮",
+        "intensity": 0.9,
+        "confidence": 0.6991,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "俏皮",
+        "元气"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-06",
+      "scene": "玩笑",
+      "elapsed_ms": 201.7,
+      "decision": {
+        "emotion": "倔强",
+        "intensity": 0.9,
+        "confidence": 0.899,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "倔强",
+        "俏皮"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-07",
+      "scene": "玩笑",
+      "elapsed_ms": 200.92,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "俏皮",
+        "惊讶",
+        "元气"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "玩笑-08",
+      "scene": "玩笑",
+      "elapsed_ms": 199.85,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "俏皮"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "玩笑-09",
+      "scene": "玩笑",
+      "elapsed_ms": 202.67,
+      "decision": {
+        "emotion": "俏皮",
+        "intensity": 0.9,
+        "confidence": 0.5295,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "倔强",
+        "俏皮"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-10",
+      "scene": "玩笑",
+      "elapsed_ms": 201.53,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "俏皮",
+        "元气"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "玩笑-11",
+      "scene": "玩笑",
+      "elapsed_ms": 213.93,
+      "decision": {
+        "emotion": "温柔",
+        "intensity": 0.9,
+        "confidence": 0.4253,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "俏皮",
+        "温柔"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-12",
+      "scene": "玩笑",
+      "elapsed_ms": 202.25,
+      "decision": {
+        "emotion": "惊讶",
+        "intensity": 0.9,
+        "confidence": 0.5464,
+        "source": "kev",
+        "decay_ms": 1200
+      },
+      "reason": "accepted",
+      "expected": [
+        "惊讶",
+        "俏皮"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-13",
+      "scene": "玩笑",
+      "elapsed_ms": 201.02,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "倔强",
+        "俏皮"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "玩笑-14",
+      "scene": "玩笑",
+      "elapsed_ms": 202.08,
+      "decision": {
+        "emotion": "倔强",
+        "intensity": 0.9,
+        "confidence": 0.608,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "俏皮",
+        "倔强"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-15",
+      "scene": "玩笑",
+      "elapsed_ms": 202.8,
+      "decision": {
+        "emotion": "俏皮",
+        "intensity": 0.9,
+        "confidence": 0.4604,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "俏皮",
+        "元气"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-16",
+      "scene": "玩笑",
+      "elapsed_ms": 203.45,
+      "decision": {
+        "emotion": "惊讶",
+        "intensity": 0.9,
+        "confidence": 0.6499,
+        "source": "kev",
+        "decay_ms": 1200
+      },
+      "reason": "accepted",
+      "expected": [
+        "俏皮",
+        "惊讶"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-17",
+      "scene": "玩笑",
+      "elapsed_ms": 211.2,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "元气",
+        "倔强"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "玩笑-18",
+      "scene": "玩笑",
+      "elapsed_ms": 207.19,
+      "decision": {
+        "emotion": "俏皮",
+        "intensity": 0.9,
+        "confidence": 0.4377,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "俏皮"
+      ],
+      "acceptable": true
+    },
+    {
+      "id": "玩笑-19",
+      "scene": "玩笑",
+      "elapsed_ms": 204.54,
+      "decision": null,
+      "reason": "low_confidence",
+      "expected": [
+        "俏皮"
+      ],
+      "acceptable": null
+    },
+    {
+      "id": "玩笑-20",
+      "scene": "玩笑",
+      "elapsed_ms": 199.86,
+      "decision": {
+        "emotion": "倔强",
+        "intensity": 0.9,
+        "confidence": 0.6518,
+        "source": "kev",
+        "decay_ms": 0
+      },
+      "reason": "accepted",
+      "expected": [
+        "倔强",
+        "俏皮"
+      ],
+      "acceptable": true
+    }
+  ],
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 3090 (24 GB), two devices available",
+    "kev_checkout": "2ba81661a7875e13295739a14c73578c1832705a",
+    "cached_weight_revision": "485ace8703592fcf405488b262449990824cfed1",
+    "note": "Checkout and cached weights recorded; running process revision was not independently exposed by API."
+  }
+}

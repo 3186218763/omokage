@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 from pathlib import Path
 
 import httpx
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 from dialogue.conversation import Conversation
 from dialogue.performance import from_jev_choice
 from frontend.web import WebChatService, create_app, parse_chat_request, sse_event
+from config import AppConfig, LLMConfig, TTSConfig
 
 
 def _async_iter(tokens):
@@ -25,6 +27,69 @@ class FakeService:
         yield {"type": "done"}
 
 
+def test_persistent_web_history_and_opt_in_memories_survive_restart(tmp_path):
+    from fastapi.testclient import TestClient
+
+    class StoredService:
+        async def stream(self, message, conversation, *, interrupt=None):
+            conversation.add_user_message(message)
+            conversation.add_assistant_message("收到。")
+            yield {"type": "done"}
+
+    config = AppConfig(
+        llm=LLMConfig(api_key="key", base_url="https://example.test", model="model"),
+        tts=TTSConfig(base_url="http://localhost:5000"),
+        database_path=str(tmp_path / "sessions.db"),
+    )
+    first = TestClient(create_app(StoredService(), config=config))
+    enabled = first.put("/api/memories", json={"session_id": "one", "enabled": True})
+    assert enabled.status_code == 200
+    response = first.post("/api/chat", json={"session_id": "one", "message": "我叫小林。"})
+    assert response.status_code == 200
+    assert first.get("/api/memories", params={"session_id": "one"}).json()["memories"][0]["value"] == "小林"
+
+    second = TestClient(create_app(StoredService(), config=config))
+    history = second.get("/api/history", params={"session_id": "one"}).json()["messages"]
+    assert history == [
+        {"role": "user", "content": "我叫小林。"},
+        {"role": "assistant", "content": "收到。"},
+    ]
+    assert second.get("/api/memories", params={"session_id": "one"}).json()["enabled"] is True
+    assert second.post("/api/reset", json={"session_id": "one"}).status_code == 200
+    third = TestClient(create_app(StoredService(), config=config))
+    assert third.get("/api/history", params={"session_id": "one"}).json()["messages"] == []
+    assert third.get("/api/memories", params={"session_id": "one"}).json()["memories"] == []
+
+
+def test_storage_failure_warns_without_losing_the_live_reply(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from dialogue.session_store import SessionStore
+
+    class StoredService:
+        async def stream(self, message, conversation, *, interrupt=None):
+            conversation.add_user_message(message)
+            conversation.add_assistant_message("收到。")
+            yield {"type": "done"}
+
+    config = AppConfig(
+        llm=LLMConfig(api_key="key", base_url="https://example.test", model="model"),
+        tts=TTSConfig(base_url="http://localhost:5000"),
+        database_path=str(tmp_path / "sessions.db"),
+    )
+    app = create_app(StoredService(), config=config)
+
+    def fail_save(self, session_id, conversation):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(SessionStore, "save", fail_save)
+    response = TestClient(app).post("/api/chat", json={"v": 2, "turn_id": "turn-one", "session_id": "one", "message": "你好"})
+    events = [json.loads(line.removeprefix("data: ")) for line in response.text.splitlines() if line.startswith("data: ")]
+    assert response.status_code == 200
+    assert [event["type"] for event in events] == ["storage_warning", "done"]
+    assert events[0]["turn_id"] == "turn-one"
+    assert "未保存" in events[0]["message"]
+
+
 @pytest.mark.asyncio
 async def test_web_chat_streams_text_and_audio_events_in_order():
     llm = AsyncMock()
@@ -35,24 +100,18 @@ async def test_web_chat_streams_text_and_audio_events_in_order():
 
     events = [event async for event in service.stream("hello", Conversation())]
 
-    # 预取深度 2：两句事件先行，音频随后按 index 序下发
-    assert [event["type"] for event in events] == [
-        "performance",
-        "sentence",
-        "sentence",
-        "audio",
-        "audio",
-        "timing",
-        "done",
-    ]
+    # Ready audio may precede later text; each sentence still precedes its audio.
+    types = [event["type"] for event in events]
+    assert types[0] == "performance"
+    assert types[-2:] == ["timing", "done"]
+    sentences = [event for event in events if event["type"] == "sentence"]
+    audios = [event for event in events if event["type"] == "audio"]
+    assert [event["text"] for event in sentences] == ["你好呀。", "今天也要加油！"]
+    assert [event["index"] for event in audios] == [0, 1]
+    assert [base64.b64decode(event["audio"]) for event in audios] == [b"wav-one", b"wav-two"]
+    assert all(events.index(sentences[i]) < events.index(audios[i]) for i in range(2))
     assert events[0]["emotion"] == "日常"
     assert events[0]["source"] == "speaking_style"
-    assert events[1]["text"] == "你好呀。"
-    assert events[3]["index"] == 0
-    assert base64.b64decode(events[3]["audio"]) == b"wav-one"
-    assert events[2]["text"] == "今天也要加油！"
-    assert events[4]["index"] == 1
-    assert base64.b64decode(events[4]["audio"]) == b"wav-two"
 
 
 @pytest.mark.asyncio
@@ -252,6 +311,24 @@ async def test_web_filters_stage_directions_before_text_and_audio():
         "role": "assistant",
         "content": "见到你真开心！",
     }
+
+
+@pytest.mark.asyncio
+async def test_web_pause_tag_is_sentence_metadata_only():
+    llm = AsyncMock()
+    llm.stream_chat = MagicMock(return_value=_async_iter([
+        "【说话语气:日常】【停顿:长】先接住你。【停顿:中】然后才说这句。",
+    ]))
+    tts = AsyncMock()
+    tts.synthesize = AsyncMock(return_value=b"wav")
+    conversation = Conversation()
+    events = [event async for event in WebChatService(llm, tts).stream("在吗", conversation)]
+    sentences = [event for event in events if event["type"] == "sentence"]
+    assert [event["text"] for event in sentences] == ["先接住你。", "然后才说这句。"]
+    assert "pause_ms" not in sentences[0]
+    assert sentences[1]["pause_ms"] == 700
+    assert "停顿" not in "".join(event["text"] for event in sentences)
+    assert "停顿" not in conversation.get_messages()[-1]["content"]
 
 
 class _FakeJev:
@@ -666,7 +743,7 @@ async def test_session_limit_does_not_evict_an_active_conversation():
 
 
 @pytest.mark.asyncio
-async def test_web_motion_events_precede_sentences_and_stay_out_of_text():
+async def test_web_motion_stays_attached_to_its_sentence_and_out_of_text():
     llm = AsyncMock()
     llm.stream_chat = MagicMock(
         return_value=_async_iter(
@@ -687,23 +764,19 @@ async def test_web_motion_events_precede_sentences_and_stay_out_of_text():
     ]
 
     types = [event["type"] for event in events]
-    motions = [event["motion"] for event in events if event["type"] == "motion"]
-    sentences = [event["text"] for event in events if event["type"] == "sentence"]
+    sentences = [event for event in events if event["type"] == "sentence"]
 
-    # 相邻同词（点头+点头）被丢弃；第三个动作（歪头）放行
-    assert motions == ["点头", "歪头"]
-    assert sentences == ["早好音。", "又一句。", "歪一下。"]
-    for text in sentences:
-        assert "动作" not in text
-    # 每个动作事件都紧贴它修饰的句子之前
-    assert types.index("motion") < types.index("sentence")
+    assert [event["text"] for event in sentences] == ["早好音。", "又一句。", "歪一下。"]
+    assert [event["motion"] for event in sentences] == ["点头", "点头", "歪头"]
+    for event in sentences:
+        assert "动作" not in event["text"]
     assert types[-1] == "done"
     assert tts.synthesize.await_args_list[0].args == ("早好音。",)
     assert conversation.get_messages()[-1]["content"] == "早好音。又一句。歪一下。"
 
 
 @pytest.mark.asyncio
-async def test_web_motion_over_limit_silently_dropped_but_tags_stripped():
+async def test_web_motion_repeats_are_preserved_and_tags_stripped():
     llm = AsyncMock()
     llm.stream_chat = MagicMock(
         return_value=_async_iter(
@@ -723,10 +796,9 @@ async def test_web_motion_over_limit_silently_dropped_but_tags_stripped():
         async for event in WebChatService(llm, tts).stream("嗨", conversation)
     ]
 
-    motions = [event["motion"] for event in events if event["type"] == "motion"]
-    sentences = [event["text"] for event in events if event["type"] == "sentence"]
-    assert motions == ["点头", "摇头"]  # 第三个超出「一轮至多 2 个」
-    assert sentences == ["一。", "二。", "三。"]
+    sentences = [event for event in events if event["type"] == "sentence"]
+    assert [event["motion"] for event in sentences] == ["点头", "摇头", "歪头"]
+    assert [event["text"] for event in sentences] == ["一。", "二。", "三。"]
 
 
 @pytest.mark.asyncio

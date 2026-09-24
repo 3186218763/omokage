@@ -41,3 +41,11 @@ Thumbs.db
 # 归档
 *.zip
 .worktrees/
+
+# Browser test artifacts
+frontend/test-results/
+frontend/playwright-report/
+
+# 本地工具缓存与会话状态
+/node_modules/
+.zcode/

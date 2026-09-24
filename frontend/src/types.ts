@@ -1,21 +1,22 @@
-export type ChatEvent =
-  | { type: "sentence"; text: string }
-  | { type: "audio"; audio: string; index: number } // base64 WAV；index = 轮内句序（TTS 预取下音频晚于后续 sentence 到达）
+export type ChatEvent = { v: 2; turn_id: string } & (
+  | { type: "sentence"; text: string; index: number; motion: string | null; pause_ms?: number }
+  | { type: "audio"; audio: string; mime_type?: "audio/wav" | "audio/mpeg"; index: number } // base64；index = 轮内句序
   | { type: "audio_error"; message: string; index: number }
   | { type: "error"; message: string }
-  | { type: "done" }
+  | { type: "storage_warning"; message: string }
+  | { type: "done"; sentence_count: number }
   | { type: "interrupted" }                  // 让路收尾：本轮到此为止，不是错误
-  | { type: "motion"; motion: string }       // 句级动作闭集：点头/摇头/歪头
   // 每轮时延观测（诊断用，不驱动 UI；字段口径见 docs/improvements/p1-10）
-  | { type: "timing"; [field: string]: unknown }
+  | { type: "timing" }
   | {
       type: "performance";
       emotion: string;
       intensity: number;
       confidence: number;
-      source: "speaking_style" | "jev";
+      source: "speaking_style" | "jev" | "kev";
+      revision: number;
       decay_ms: number;
-    };
+    });
 
 export interface ChatMessage {
   id: string;
@@ -24,6 +25,7 @@ export interface ChatMessage {
   sentences: string[];                      // 助手按句切分；弹窗只显示正在说的那一句
   audio: { url: string; error?: string }[]; // data: URL 或合成失败标记
   error?: string;
+  warning?: string;
 }
 
 export interface HealthStatus {

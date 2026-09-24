@@ -41,12 +41,30 @@
   z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  gap: 14px;
   transition: opacity var(--dur-med) var(--ease);
 }
 .dockHidden { opacity: 0; pointer-events: none; }
+/* 漫画气泡层：AI 泡锚在角色嘴边两侧（--mouth-y 嘴的高度，--cheek-l/r 脸颊左右边缘） */
+.speech {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  --mouth-y: 26%;
+  --cheek-l: 34%;
+  --cheek-r: 66%;
+  transition: opacity var(--dur-med) var(--ease);
+}
+.speechHidden { opacity: 0; }
 
 @media (max-width: 768px) {
   .chrome { top: 12px; left: 12px; right: 12px; }
   .dock { width: calc(100% - 20px); bottom: max(12px, env(safe-area-inset-bottom)); }
+  .speech {
+    --mouth-y: 24%;
+    --cheek-l: 30%;
+    --cheek-r: 70%;
+  }
 }

@@ -32,6 +32,8 @@ conversation:
   summary_trigger_turns: 12
   summary_trigger_chars: 12000
   summary_max_chars: 1800
+  # SQLite recovery store. Set to an empty string to keep sessions in memory only.
+  database_path: "data/sessions.db"
   # 轮末是否向前端发 timing 事件（每轮时延观测；前端不消费，debug 用）。
   timing_event: true
 
@@ -41,6 +43,9 @@ streaming:
   # TTS 预取深度：每句事件先行、合成进按序队列，队列满才下发最旧音频。
   # 1 = 旧行为（逐句串行）；2-3 = 预取，句间 gap 更小。上限 3（保护单卡 SBV2）。
   tts_prefetch_depth: 2
+  # 可选 mp3（需要 ffmpeg）；不可用时服务回落 WAV。
+  audio_encoding: wav
+  audio_bitrate_kbps: 96
 
 # 表演情绪。未启用时脸跟说话语气走。
 # 本地 Kev：base_url 写到 /v1/systemone，密钥填任意非空字符串（服务未设 KEV_API_KEY 时会忽略）。

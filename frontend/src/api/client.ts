@@ -1,31 +1,36 @@
 import type { ChatEvent, HealthStatus } from "../types";
 
 /** discriminated-union type guard：JSON.parse 返回 unknown，禁 any 下必须窄化。 */
-function isChatEvent(value: unknown): value is ChatEvent {
+export function isChatEvent(value: unknown): value is ChatEvent {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
+  const index = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  if (v.v !== 2 || typeof v.turn_id !== "string" || !v.turn_id) return false;
   switch (v.type) {
     case "sentence":
-      return typeof v.text === "string";
+      return typeof v.text === "string" && index(v.index) && (v.motion === null || ["点头", "摇头", "歪头"].includes(String(v.motion)))
+        && (v.pause_ms === undefined || [0, 300, 700, 1200].includes(Number(v.pause_ms)));
     case "audio":
-      return typeof v.audio === "string" && typeof v.index === "number";
+      return typeof v.audio === "string" && index(v.index)
+        && (v.mime_type === undefined || v.mime_type === "audio/wav" || v.mime_type === "audio/mpeg");
     case "audio_error":
-      return typeof v.message === "string" && typeof v.index === "number";
+      return typeof v.message === "string" && index(v.index);
     case "error":
+    case "storage_warning":
       return typeof v.message === "string";
     case "timing":
       return true; // 诊断事件：结构宽松，前端不消费
     case "done":
+      return index(v.sentence_count);
     case "interrupted":
       return true;
-    case "motion":
-      return typeof v.motion === "string";
     case "performance":
-      return typeof v.emotion === "string"
-        && typeof v.intensity === "number"
-        && typeof v.confidence === "number"
-        && (v.source === "speaking_style" || v.source === "jev")
-        && typeof v.decay_ms === "number";
+      return ["日常", "元气", "温柔", "俏皮", "倔强", "惊讶"].includes(String(v.emotion))
+        && index(v.revision)
+        && typeof v.intensity === "number" && Number.isFinite(v.intensity) && v.intensity >= 0 && v.intensity <= 1
+        && typeof v.confidence === "number" && Number.isFinite(v.confidence) && v.confidence >= 0 && v.confidence <= 1
+        && (v.source === "speaking_style" || v.source === "jev" || v.source === "kev")
+        && index(v.decay_ms);
     default:
       return false;
   }
@@ -34,11 +39,12 @@ function isChatEvent(value: unknown): value is ChatEvent {
 export async function* streamChat(
   message: string,
   sessionId: string,
+  turnId: string,
 ): AsyncGenerator<ChatEvent> {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ v: 2, message, session_id: sessionId, turn_id: turnId }),
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
@@ -49,18 +55,27 @@ export async function* streamChat(
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split("\n\n");
-    buffer = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      if (!chunk.startsWith("data: ")) continue;
-      const event = JSON.parse(chunk.slice(6)) as unknown;
-      if (!isChatEvent(event)) throw new Error("未知事件类型");
-      yield event;
+  let terminal = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+      for (const chunk of chunks) {
+        if (!chunk.startsWith("data: ")) continue;
+        const event = JSON.parse(chunk.slice(6)) as unknown;
+        if (!isChatEvent(event)) throw new Error("未知事件类型");
+        if (event.turn_id !== turnId) throw new Error("回复轮标识不匹配");
+        if (["done", "interrupted", "error"].includes(event.type)) terminal = true;
+        yield event;
+      }
     }
+    if (!terminal) throw new Error("回复连接提前结束");
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }
 
@@ -82,19 +97,20 @@ export async function transcribeAudio(blob: Blob): Promise<string> {
 }
 
 export async function resetSession(sessionId: string): Promise<void> {
-  await fetch("/api/reset", {
+  const response = await fetch("/api/reset", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId }),
   });
+  if (!response.ok) throw new Error("清空对话失败");
 }
 
 /** 让路：请后端停掉该会话正在说的这轮话。没人在说也无害。 */
-export async function interruptSession(sessionId: string): Promise<void> {
+export async function interruptSession(sessionId: string, turnId?: string, highestStarted = -1, startedIndices?: number[]): Promise<void> {
   await fetch("/api/interrupt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId }),
+    body: JSON.stringify({ session_id: sessionId, turn_id: turnId, highest_started: highestStarted, started_indices: startedIndices }),
   });
 }
 
@@ -102,4 +118,47 @@ export async function fetchHealth(): Promise<HealthStatus> {
   const response = await fetch("/healthz");
   if (!response.ok) throw new Error("健康检查失败");
   return (await response.json()) as HealthStatus;
+}
+
+export async function fetchHistory(sessionId: string): Promise<{ messages: { role: "user" | "assistant"; content: string }[] }> {
+  const response = await fetch(`/api/history?session_id=${encodeURIComponent(sessionId)}`);
+  if (!response.ok) throw new Error("读取历史失败");
+  return response.json() as Promise<{ messages: { role: "user" | "assistant"; content: string }[] }>;
+}
+
+export async function acknowledgePlayback(sessionId: string, turnId: string, index: number, eventSeq: number, kind: "started" | "ended"): Promise<void> {
+  await fetch("/api/playback", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, turn_id: turnId, index, event_seq: eventSeq, kind }),
+  });
+}
+
+export interface UserMemory {
+  id: number;
+  kind: string;
+  value: string;
+  source_text: string;
+  updated_at: string;
+  retrieval_count: number;
+}
+export interface MemoryState { enabled: boolean; memories: UserMemory[] }
+
+export async function fetchMemories(sessionId: string): Promise<MemoryState> {
+  const response = await fetch(`/api/memories?session_id=${encodeURIComponent(sessionId)}`);
+  if (!response.ok) throw new Error("读取记忆失败");
+  return response.json() as Promise<MemoryState>;
+}
+
+export async function setMemoriesEnabled(sessionId: string, enabled: boolean): Promise<MemoryState> {
+  const response = await fetch("/api/memories", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, enabled }),
+  });
+  if (!response.ok) throw new Error("更新记忆设置失败");
+  return response.json() as Promise<MemoryState>;
+}
+
+export async function deleteMemory(sessionId: string, id: number): Promise<void> {
+  const response = await fetch(`/api/memories/${id}?session_id=${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  if (!response.ok) throw new Error("删除记忆失败");
 }

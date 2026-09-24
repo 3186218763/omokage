@@ -41,14 +41,16 @@ export function blendParams(
   const vad = performanceVad(name, intensity);
   const smile = (vad.valence - 0.5) * 2;
   const surprise = name === "惊讶" ? 1 : 0;
+  const blinkPhase = ((timeSec % 4.3) + 4.3) % 4.3;
+  const blink = blinkPhase < 0.18 ? 1 - Math.sin(Math.PI * blinkPhase / 0.18) : 1;
   const sway = Math.sin(timeSec * 0.7) * (3 + vad.arousal * 6);
   return {
     ParamMouthOpenY: clamp01(mouth),
     ParamMouthForm: clamp(smile, -1, 1),
     ParamEyeLSmile: clamp01(Math.max(0, smile) * intensity),
     ParamEyeRSmile: clamp01(Math.max(0, smile) * intensity),
-    ParamEyeLOpen: clamp(0.85 - Math.max(0, smile) * 0.25 + surprise * 0.2, 0, 1.2),
-    ParamEyeROpen: clamp(0.85 - Math.max(0, smile) * 0.25 + surprise * 0.2, 0, 1.2),
+    ParamEyeLOpen: clamp(0.85 - Math.max(0, smile) * 0.25 + surprise * 0.2, 0, 1.2) * blink,
+    ParamEyeROpen: clamp(0.85 - Math.max(0, smile) * 0.25 + surprise * 0.2, 0, 1.2) * blink,
     ParamBrowLY: clamp((vad.dominance - 0.5) * 0.8 + surprise * 0.45, -1, 1),
     ParamBrowRY: clamp((vad.dominance - 0.5) * 0.8 + surprise * 0.45, -1, 1),
     ParamBrowLAngle: surprise * 0.3,

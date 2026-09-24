@@ -1,7 +1,6 @@
 import pytest
 
 from dialogue.motion import (
-    MAX_MOTIONS_PER_TURN,
     MotionPolicy,
     normalize_motion,
     strip_motion_tags,
@@ -31,34 +30,13 @@ def test_take_strips_every_leading_tag_even_when_all_invalid():
     assert rest == "正片。"
 
 
-def test_policy_allows_at_most_two_motions_per_turn():
+def test_policy_preserves_repeated_motions_in_one_turn():
     policy = MotionPolicy()
     assert policy.take("【动作:点头】一。")[0] == "点头"
-    assert policy.take("【动作:摇头】二。")[0] == "摇头"
-    assert policy.take("【动作:歪头】三。")[0] is None
-    assert policy.accepted == ["点头", "摇头"]
-
-
-def test_policy_drops_consecutive_repeat_and_keeps_dropping():
-    policy = MotionPolicy()
-    assert policy.take("【动作:点头】一。")[0] == "点头"
-    assert policy.take("【动作:点头】二。")[0] is None
-    # 被丢弃的重复也推进「上次用词」：紧跟着再标点头仍算连续重复
-    assert policy.take("【动作:点头】三。")[0] is None
-    assert policy.take("【动作:摇头】四。")[0] == "摇头"
-    assert policy.accepted == ["点头", "摇头"]
-
-
-def test_limit_and_repeat_share_one_budget_per_turn():
-    policy = MotionPolicy()
-    assert policy.take("【动作:点头】一。")[0] == "点头"
-    assert policy.take("【动作:点头】二。")[0] is None
+    assert policy.take("【动作:点头】二。")[0] == "点头"
     assert policy.take("【动作:摇头】三。")[0] == "摇头"
-    assert policy.take("【动作:歪头】四。")[0] is None
-
-
-def test_max_motions_is_two():
-    assert MAX_MOTIONS_PER_TURN == 2
+    assert policy.take("【动作:摇头】四。")[0] == "摇头"
+    assert policy.accepted == ["点头", "点头", "摇头", "摇头"]
 
 
 def test_strip_motion_tags_removes_anywhere_occurrences():

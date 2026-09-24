@@ -14,6 +14,7 @@
   background: var(--user-bubble); border: 1px solid var(--user-bubble-line);
   border-bottom-right-radius: 5px; box-shadow: var(--shadow-bubble);
 }
+.warning { margin-top: 8px; color: #e9ac74; font-size: 12px; }
 @keyframes riseIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }

@@ -145,3 +145,47 @@ async def test_jev_missing_choice_cools_down():
     now["t"] = 5.0
     assert await client.ask("state") is None
     assert respx.calls.call_count == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_total_deadline_busy_fallback_and_cancellation_release_client():
+    import asyncio
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed(_request):
+        entered.set()
+        await release.wait()
+        return httpx.Response(200, json={"answers": {"emotion": {"choice": "gentle", "confidence": .8}}})
+
+    respx.post("https://jev.test/secret-token/v1/systemone").mock(side_effect=delayed)
+    client = _client()
+    client.timeout_seconds = .05
+    task = asyncio.create_task(client.ask("state"))
+    await entered.wait()
+    assert await client.ask("second") is None
+    assert client.last_reason == "busy"
+    assert await task is None
+    assert client.last_reason == "timeout"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_intensity_requires_own_confidence_and_pool_can_be_reused():
+    route = respx.post("https://jev.test/secret-token/v1/systemone").mock(return_value=httpx.Response(200, json={
+        "answers": {"emotion": {"choice": "gentle", "confidence": .8},
+                    "intensity": {"choice": "strong", "confidence": .1}}
+    }))
+    client = _client()
+    try:
+        assert (await client.ask("one")).intensity == .9
+        route.mock(return_value=httpx.Response(200, json={
+            "answers": {"emotion": {"choice": "gentle", "confidence": .8},
+                        "intensity": {"choice": "strong", "confidence": .8}}
+        }))
+        assert (await client.ask("two")).intensity == 1
+    finally:
+        await client.aclose()

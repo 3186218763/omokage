@@ -69,6 +69,7 @@ class Conversation:
         # 不进历史存储本身（get_messages/get_context_messages 不带时间）。
         self._times: list[str] = []
         self._summary = ""
+        self.user_memory_context: list[str] = []
         self._recent_turns = resolved_recent_turns
         self._summary_trigger_turns = resolved_trigger_turns
         self._summary_trigger_chars = summary_trigger_chars
@@ -86,6 +87,37 @@ class Conversation:
     @property
     def summary_max_chars(self) -> int:
         return self._summary_max_chars
+
+    def snapshot(self) -> dict[str, object]:
+        """Return the complete durable state without exposing mutable internals."""
+        return {
+            "messages": self.get_messages(),
+            "message_times": self.message_times,
+            "summary": self._summary,
+        }
+
+    def restore(self, snapshot: dict[str, object]) -> None:
+        """Restore a validated store record into this conversation."""
+        raw_messages = snapshot.get("messages", [])
+        raw_times = snapshot.get("message_times", [])
+        if not isinstance(raw_messages, list) or not isinstance(raw_times, list):
+            raise ValueError("conversation snapshot must contain message lists")
+        messages: list[dict[str, str]] = []
+        for item in raw_messages:
+            if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
+                raise ValueError("conversation snapshot contains an invalid message")
+            content = item.get("content")
+            if not isinstance(content, str):
+                raise ValueError("conversation snapshot contains invalid content")
+            messages.append({"role": str(item["role"]), "content": content})
+        if len(raw_times) != len(messages) or not all(isinstance(value, str) for value in raw_times):
+            raise ValueError("conversation snapshot timestamps are not aligned")
+        summary = snapshot.get("summary", "")
+        if not isinstance(summary, str):
+            raise ValueError("conversation snapshot contains invalid summary")
+        self._messages = messages
+        self._times = list(raw_times)
+        self._summary = summary[: self._summary_max_chars]
 
     def add_user_message(self, text: str) -> None:
         self._messages.append({"role": "user", "content": text})
@@ -117,12 +149,25 @@ class Conversation:
         self._messages.clear()
         self._times.clear()
         self._summary = ""
+        self.user_memory_context = []
 
     def rollback_last_user_message(self) -> None:
         """Remove a user turn that failed before an assistant reply was saved."""
         if self._messages and self._messages[-1]["role"] == "user":
             self._messages.pop()
             self._times.pop()
+
+    def replace_last_reply(self, expected: str, text: str) -> bool:
+        """Amend only the matching latest reply, before the next turn/compaction."""
+        if not self._messages or self._messages[-1] != {"role": "assistant", "content": expected}:
+            return False
+        if text:
+            self._messages[-1] = {"role": "assistant", "content": text}
+        else:
+            self._messages.pop()
+            self._times.pop()
+            self.rollback_last_user_message()
+        return True
 
     def plan_compaction(self) -> CompactionPlan | None:
         """Select complete old turns while preserving recent and in-flight turns."""

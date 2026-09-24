@@ -1,5 +1,7 @@
 # P0-1 TTS 句间流水线并行（合成深度 1 → 2-3，按序下发）
 
+**状态（2026-09-24）：改进方案已在代码中，本篇移入 `done/`。** `232b7c6` 起 `streaming.tts_prefetch_depth` 默认 2、上限 3，音频带 `index`，打断取消在飞合成。下文的串行现状是实施前记录。仍需测真实播放句间静音和 SBV2 单卡并发效果。
+
 ## 差距（airi 怎么做）
 
 airi 的语音管线核心在 `airi/packages/pipelines-audio/src/speech-pipeline.ts`：LLM token 流 → 分句 → **并发 TTS（默认 4 路）+ 序号保序调度** → 播放时间线。配套 intent 语义（`queue | interrupt | replace` + priority），打断就是管线级取消。它把「上一句合成完才开始下一句」这个浪费彻底消掉了。
@@ -22,9 +24,9 @@ CLI 路径（`dialogue/orchestrator.py` 的 tts_queue/audio_queue 双 worker）�
 
 ## 验收
 
-- `tests/test_web.py`：多句回复的事件顺序不变（sentence/audio 交错次序、句序、音频序号）；打断用例扩展为「队列里 2-3 个在飞 TTS 全部取消、无孤儿任务告警」。
-- 端到端：用 P1-10 的时延观测对比改动前后**句间 gap p95**，应显著下降；首音延迟不劣化。
-- 语义回归：打断后历史仍是「已送出的 sentence 事件」近似（web.py:253-259）。
+- `tests/test_web.py`：以 `index` 保序，预取时允许多个 sentence 先于 audio；打断取消所有在飞 TTS，无孤儿任务。
+- 端到端：P1-10 的 `audio_gaps_ms` 是服务端下发间隔，不能代替用户听到的句间静音。还需记录浏览器 `ended → next playing` 的间隔并比较 P95；首音延迟不劣化。
+- 语义回归：`232b7c6` 仍以已下发句子近似已播放句子；当前本地工作树增加播放回执，最终按已开始播放的句子保留。两种口径要分别测试，不能把服务端下发当作用户已听见。
 
 ## 边界与风险
 

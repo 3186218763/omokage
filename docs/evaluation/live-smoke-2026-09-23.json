@@ -1,0 +1,114 @@
+{
+  "base": "http://127.0.0.1:8011",
+  "errors": [],
+  "samples": [
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "send",
+      "ms": 825.2000000178814
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "received_performance",
+      "ms": 6280.700000017881
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "received_sentence",
+      "index": 0,
+      "ms": 6281.0999999940395
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "received_sentence",
+      "index": 1,
+      "ms": 6390.700000017881
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "received_performance",
+      "ms": 6703.300000011921
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "received_audio",
+      "index": 0,
+      "ms": 6802.5
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "paused",
+      "index": 0,
+      "ms": 6833.5
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "playing",
+      "index": 0,
+      "ms": 6891.200000017881
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "performance_applied",
+      "ms": 6891.5999999940395
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "motion_start",
+      "index": 0,
+      "ms": 6891.800000011921
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "received_audio",
+      "index": 1,
+      "ms": 7264.0999999940395
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "received_timing",
+      "ms": 7264.200000017881
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "received_done",
+      "ms": 7264.200000017881
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "paused",
+      "index": 0,
+      "ms": 10336.40000000596
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "ended",
+      "index": 0,
+      "ms": 10337.09999999404
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "paused",
+      "index": 1,
+      "ms": 10373.5
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "playing",
+      "index": 1,
+      "ms": 10427.300000011921
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "paused",
+      "index": 1,
+      "ms": 16540.09999999404
+    },
+    {
+      "turn_id": "3a489686-36d9-41e4-b481-f0431a084f00",
+      "event": "ended",
+      "index": 1,
+      "ms": 16541
+    }
+  ]
+}

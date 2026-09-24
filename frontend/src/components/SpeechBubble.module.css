@@ -1,0 +1,155 @@
+/* 漫画对话气泡：经典白泡、墨线描边、硬投影。
+   AI 泡从角色嘴边两侧交替弹出：一句在左、下一句在右，
+   尾巴从嘴侧边缘横向指出，popIn 从尾巴一端长出来。
+   锚点（--mouth-y / --cheek-l / --cheek-r）由 App 的 .speech 层提供，可整体调校。 */
+
+.comic {
+  position: relative;
+  border: 2.5px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: 4px 4px 0 rgba(23, 25, 30, 0.82);
+  padding: 16px 18px 14px;
+}
+
+/* —— 花音的气泡：悬在嘴边两侧 —— */
+.assistant {
+  pointer-events: none;
+  width: fit-content;
+  position: absolute;
+  top: var(--mouth-y, 26%);
+  transform: translateY(-50%);
+}
+.sideL {
+  right: calc(100% - var(--cheek-l, 34%));
+  max-width: calc(var(--cheek-l, 34%) - 3vw);
+}
+.sideR {
+  left: var(--cheek-r, 66%);
+  max-width: calc(97% - var(--cheek-r, 66%));
+}
+.paper { background: var(--paper); }
+
+/* 尾巴：贴着嘴侧边缘、垂直居中，横向指向嘴。
+   墨色大三角压底当描边，纸色小三角盖面留出墨线。 */
+.sideL .paper::before,
+.sideL .paper::after,
+.sideR .paper::before,
+.sideR .paper::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 24px;
+  height: 22px;
+  transform: translateY(-50%);
+}
+.sideL .paper::before {
+  right: -22px;
+  background: var(--ink);
+  clip-path: polygon(0 0, 0 100%, 100% 50%);
+}
+.sideL .paper::after {
+  right: -19.5px;
+  background: var(--paper);
+  clip-path: polygon(0 0, 0 100%, calc(100% - 2.5px) 50%);
+}
+.sideR .paper::before {
+  left: -22px;
+  background: var(--ink);
+  clip-path: polygon(100% 0, 100% 100%, 0 50%);
+}
+.sideR .paper::after {
+  left: -19.5px;
+  background: var(--paper);
+  clip-path: polygon(100% 0, 100% 100%, 2.5px 50%);
+}
+
+/* 从嘴边“长”出来：缩放原点在尾巴一端，外加一点向外的滑出 */
+.sideL .pop { transform-origin: 100% 50%; animation: popOutL 260ms var(--ease) both; }
+.sideR .pop { transform-origin: 0% 50%; animation: popOutR 260ms var(--ease) both; }
+
+.name {
+  position: absolute;
+  top: -13px;
+  left: 16px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+.line {
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.65;
+  font-weight: 500;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 7.2em;
+  overflow-y: auto;
+}
+.note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #b3403a;
+}
+
+/* —— 你的气泡：贴着输入框，尾巴朝下指向它 —— */
+.userDock {
+  pointer-events: none;
+  align-self: flex-end;
+  max-width: 78%;
+  animation: riseIn var(--dur-med) var(--ease) both;
+}
+.user { background: var(--paper-user); }
+.user::before,
+.user::after {
+  content: "";
+  position: absolute;
+  width: 24px;
+  height: 22px;
+  clip-path: polygon(0 0, 100% 0, 76% 100%);
+}
+.user::before {
+  left: 26px;
+  bottom: -19px;
+  background: var(--ink);
+}
+.user::after {
+  left: 28.5px;
+  bottom: -14px;
+  background: var(--paper-user);
+  clip-path: polygon(3px 0, 100% 0, 76% 100%);
+}
+.userLine {
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.55;
+  font-weight: 500;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 窄屏：留白收紧一点、字号微降，减少每句换行行数 */
+@media (max-width: 768px) {
+  .sideL { max-width: calc(var(--cheek-l, 30%) - 2vw); }
+  .sideR { max-width: calc(95% - var(--cheek-r, 70%)); }
+  .line { font-size: 15.5px; }
+}
+
+@keyframes popOutL {
+  0% { opacity: 0; transform: translateX(14px) scale(0.7); }
+  62% { opacity: 1; transform: translateX(0) scale(1.04); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes popOutR {
+  0% { opacity: 0; transform: translateX(-14px) scale(0.7); }
+  62% { opacity: 1; transform: translateX(0) scale(1.04); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}

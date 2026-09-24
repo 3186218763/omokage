@@ -60,6 +60,14 @@
   padding: 12px 16px 16px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
+.memoryHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-size: 12px; }
+.memoryToggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.memoryToggle input { accent-color: #72b9a3; }
+.memoryList { max-height: 120px; overflow-y: auto; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
+.memoryRow { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; }
+.memoryRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memoryRow button { flex: 0 0 auto; color: var(--muted); text-decoration: underline; }
+.memoryError { margin-bottom: 8px; color: #ffd9c7; font-size: 12px; }
 .reset {
   width: 100%;
   padding: 9px 0;

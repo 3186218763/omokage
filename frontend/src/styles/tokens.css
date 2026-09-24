@@ -10,6 +10,9 @@
   --ai-bubble: linear-gradient(160deg, #2b2430, #26212c);
   --user-bubble: linear-gradient(160deg, #1e3a3d, #1b3437);
   --user-bubble-line: rgba(120, 190, 185, 0.25);
+  --ink: #17191e;
+  --paper: #fffdf9;
+  --paper-user: #e9f5f2;
   --ok: #7fcf9a;
   --danger: #ec665d;
   --shadow-panel: 0 8px 26px rgba(0, 0, 0, 0.35);

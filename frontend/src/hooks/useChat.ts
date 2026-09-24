@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatMessage } from "../types";
-import { fetchHealth, interruptSession, resetSession, streamChat } from "../api/client";
+import type { ChatMessage, ChatEvent } from "../types";
+import { acknowledgePlayback, fetchHealth, fetchHistory, interruptSession, resetSession, streamChat } from "../api/client";
 import type { QueueItem } from "./useAudioQueue";
 
 export type Status =
@@ -18,7 +18,9 @@ export type Status =
 
 export interface UseChatOptions {
   enqueueAudio: (item: QueueItem) => void;
-  onPerformance?: (event: Extract<import("../types").ChatEvent, { type: "performance" }>) => void;
+  onEvent: (event: ChatEvent) => void;
+  onTurn: (turnId: string) => void;
+  onCancel: () => void;
 }
 
 const SESSION_KEY = "huayin-session-id";
@@ -37,7 +39,7 @@ function loadSessionId(): string {
   return created;
 }
 
-export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
+export function useChat({ enqueueAudio, onEvent, onTurn, onCancel }: UseChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Status>("online");
@@ -46,11 +48,11 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
   const sessionIdRef = useRef(loadSessionId());
   const busyRef = useRef(false);
   const interruptRef = useRef(false);
-  const messagesRef = useRef<ChatMessage[]>([]);
-
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+  const turnRef = useRef<string | undefined>(undefined);
+  const highestStarted = useRef(-1);
+  const eventSeq = useRef(0);
+  const startedIndices = useRef(new Set<number>());
+  const pauses = useRef(new Map<number, number>());
 
   // 健康检查 → 状态徽标与录音可用性
   useEffect(() => {
@@ -65,6 +67,18 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    void fetchHistory(sessionIdRef.current).then(({ messages: history }) => {
+      if (!active || busyRef.current) return;
+      setMessages((current) => current.length ? current : history.map((item) => ({
+        id: newId(), role: item.role, text: item.content,
+        sentences: item.role === "assistant" ? [item.content] : [], audio: [],
+      })));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
   const send = useCallback(
     async (raw: string) => {
       const message = raw.trim();
@@ -73,11 +87,11 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
       interruptRef.current = false;
       setBusy(true);
       setStatus("generating");
-      // 动作配对按句序：TTS 预取下 audio 晚于后续 sentence 到达，
-      // 「暂存到下一块到达的音频」不再成立，改为 motion → 句 index → 音频 index。
-      let sentenceIndex = -1;
-      let pendingMotion: string | null = null;
-      const motionByIndex = new Map<number, string>();
+      if (turnRef.current) {
+        onCancel();
+        await interruptSession(sessionIdRef.current, turnRef.current, highestStarted.current, [...startedIndices.current]).catch(() => {});
+      }
+      const seen = new Set<string>();
       const userMessage: ChatMessage = {
         id: newId(),
         role: "user",
@@ -86,6 +100,12 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
         audio: [],
       };
       const assistantId = newId();
+      turnRef.current = assistantId;
+      highestStarted.current = -1;
+      eventSeq.current = 0;
+      startedIndices.current.clear();
+      pauses.current.clear();
+      onTurn(assistantId);
       const assistantMessage: ChatMessage = {
         id: assistantId,
         role: "assistant",
@@ -95,13 +115,14 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
       };
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
       try {
-        for await (const event of streamChat(message, sessionIdRef.current)) {
+        for await (const event of streamChat(message, sessionIdRef.current, assistantId)) {
+          if (event.turn_id !== assistantId || interruptRef.current) continue;
+          const identity = "index" in event ? `${event.type}:${event.index}` : null;
+          if (identity && seen.has(identity)) continue;
+          if (identity) seen.add(identity);
+          onEvent(event);
           if (event.type === "sentence") {
-            sentenceIndex += 1;
-            if (pendingMotion !== null) {
-              motionByIndex.set(sentenceIndex, pendingMotion);
-              pendingMotion = null;
-            }
+            pauses.current.set(event.index, event.pause_ms ?? 0);
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId
@@ -112,36 +133,33 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
           } else if (event.type === "audio") {
             // 已让路的轮：迟到的音频不再入队（淡出后再自动播放就穿帮了）
             if (interruptRef.current) continue;
-            const url = `data:audio/wav;base64,${event.audio}`;
+            const url = `data:${event.mime_type ?? "audio/wav"};base64,${event.audio}`;
             // 动作不在事件到达时触发，而是搭在对应句的音频上，起播瞬间才动
-            const motion = motionByIndex.get(event.index);
-            enqueueAudio({ key: `${assistantId}:${event.index}`, url, motion });
+            enqueueAudio({ key: `${assistantId}:${event.index}`, url, turnId: assistantId, index: event.index, pauseMs: pauses.current.get(event.index) ?? 0 });
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === assistantId ? { ...m, audio: [...m.audio, { url }] } : m,
+                m.id === assistantId ? { ...m, audio: Object.assign([...m.audio], { [event.index]: { url } }) } : m,
               ),
             );
           } else if (event.type === "audio_error") {
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId
-                  ? { ...m, audio: [...m.audio, { url: "", error: event.message }] }
+                  ? { ...m, audio: Object.assign([...m.audio], { [event.index]: { url: "", error: event.message } }) }
                   : m,
               ),
             );
-          } else if (event.type === "performance") {
-            onPerformance?.(event);
-          } else if (event.type === "motion") {
-            // 暂存到它修饰的那句上；该句音频起播时由音频队列回调触发
-            pendingMotion = event.motion;
           } else if (event.type === "timing") {
             // 每轮时延观测事件：不驱动 UI
+          } else if (event.type === "storage_warning") {
+            setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, warning: event.message } : m));
           } else if (event.type === "error") {
             throw new Error(event.message);
           }
         }
         setStatus("online");
       } catch (error) {
+        onCancel();
         const reason = error instanceof Error ? error.message : "未知错误";
         setMessages((prev) =>
           prev.map((m) =>
@@ -160,20 +178,33 @@ export function useChat({ enqueueAudio, onPerformance }: UseChatOptions) {
         setBusy(false);
       }
     },
-    [enqueueAudio, onPerformance],
+    [enqueueAudio, onEvent, onTurn, onCancel],
   );
 
   /** 让路：请后端停掉正在说的这轮话；本轮后续音频不再入队。 */
   const interrupt = useCallback(async () => {
-    if (!busyRef.current || interruptRef.current) return;
+    if (!turnRef.current || interruptRef.current) return;
     interruptRef.current = true;
-    await interruptSession(sessionIdRef.current).catch(() => {});
+    onCancel();
+    await interruptSession(sessionIdRef.current, turnRef.current, highestStarted.current, [...startedIndices.current]).catch(() => {});
+  }, [onCancel]);
+
+  const reportPlayback = useCallback((turnId: string, index: number, kind: "started" | "ended") => {
+    if (turnId !== turnRef.current || interruptRef.current) return;
+    startedIndices.current.add(index);
+    highestStarted.current = Math.max(highestStarted.current, index);
+    void acknowledgePlayback(sessionIdRef.current, turnId, index, eventSeq.current++, kind).catch(() => {});
   }, []);
 
   const reset = useCallback(async () => {
-    await resetSession(sessionIdRef.current).catch(() => {});
-    setMessages([]);
+    try {
+      await resetSession(sessionIdRef.current);
+      turnRef.current = undefined;
+      setMessages([]);
+    } catch {
+      setStatus("error");
+    }
   }, []);
 
-  return { messages, busy, status, asrEnabled, send, interrupt, reset };
+  return { messages, busy, status, asrEnabled, sessionId: sessionIdRef.current, send, interrupt, reset, reportPlayback };
 }

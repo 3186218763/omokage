@@ -94,6 +94,9 @@ class AppConfig:
     max_sentence_chars: int = 50
     tts_prefetch_depth: int = 2
     timing_event: bool = True
+    database_path: str = "data/sessions.db"
+    audio_encoding: str = "wav"
+    audio_bitrate_kbps: int = 96
     asr: ASRConfig = field(default_factory=ASRConfig)
     jev: JevConfig = field(default_factory=JevConfig)
     live2d: Live2DConfig = field(default_factory=Live2DConfig)
@@ -117,6 +120,12 @@ def load_config(path: str = "configs/config.yaml") -> AppConfig:
         raise ValueError(
             f"streaming.tts_prefetch_depth must be between 1 and {MAX_TTS_PREFETCH_DEPTH}"
         )
+    audio_encoding = str(streaming.get("audio_encoding", "wav") or "wav").lower()
+    audio_bitrate_kbps = int(streaming.get("audio_bitrate_kbps", 96))
+    if audio_encoding not in {"wav", "mp3"}:
+        raise ValueError("streaming.audio_encoding must be wav or mp3")
+    if not 32 <= audio_bitrate_kbps <= 192:
+        raise ValueError("streaming.audio_bitrate_kbps must be between 32 and 192")
     return AppConfig(
         llm=LLMConfig(
             **{key: value for key, value in data["llm"].items() if key in _LLM_FIELDS}
@@ -135,6 +144,9 @@ def load_config(path: str = "configs/config.yaml") -> AppConfig:
         max_sentence_chars=streaming.get("max_sentence_chars", 50),
         tts_prefetch_depth=tts_prefetch_depth,
         timing_event=conversation.get("timing_event", True),
+        database_path=str(conversation.get("database_path", "data/sessions.db") or ""),
+        audio_encoding=audio_encoding,
+        audio_bitrate_kbps=audio_bitrate_kbps,
         jev=JevConfig(**{key: value for key, value in jev_raw.items() if key in _JEV_FIELDS}),
         live2d=Live2DConfig(
             model_dir=str(live2d_raw.get("model_dir") or ""),

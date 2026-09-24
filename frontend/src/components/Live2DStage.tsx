@@ -5,7 +5,9 @@ import styles from "./Live2DStage.module.css";
 export interface Live2DHandle {
   setMouth(value: number): void;
   setPerformance(input: PerformanceInput): void;
-  playMotion(name: string): void;
+  playMotion(name: string, duration?: number, currentTime?: number): void;
+  setMotionTime(currentTime: number): void;
+  stopMotion(): void;
   resetIdle(): void;
 }
 
@@ -35,9 +37,11 @@ export const Live2DStage = forwardRef<Live2DHandle, Live2DStageProps>(
       pendingRef.current = input;
       controllerRef.current?.setPerformance(input);
     },
-    playMotion(name: string) {
-      controllerRef.current?.playMotion(name);
+    playMotion(name: string, duration?: number, currentTime?: number) {
+      controllerRef.current?.playMotion(name, duration, currentTime);
     },
+    setMotionTime(currentTime: number) { controllerRef.current?.setMotionTime(currentTime); },
+    stopMotion() { controllerRef.current?.stopMotion(); },
     resetIdle() {
       pendingRef.current = { emotion: "日常", intensity: 0.55, decayMs: 0 };
       mouthRef.current = 0;

@@ -20,6 +20,7 @@ export function ChatMessage({
     <div className={`${styles.row} ${message.role === "user" ? styles.user : styles.ai}`}>
       <div className={styles.bubble}>
         {message.text || "…"}
+        {message.warning && <div className={styles.warning} role="status">{message.warning}</div>}
         {message.audio.map((audio, index) => (
           <AudioPlayer
             key={`${message.id}:${index}`}

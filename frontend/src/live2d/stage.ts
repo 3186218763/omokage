@@ -21,7 +21,9 @@ export interface PerformanceInput {
 export interface StageController {
   setMouth(value: number): void;
   setPerformance(input: PerformanceInput): void;
-  playMotion(name: string): void;
+  playMotion(name: string, duration?: number, currentTime?: number): void;
+  setMotionTime(currentTime: number): void;
+  stopMotion(): void;
   resetIdle(): void;
   destroy(): void;
 }
@@ -147,7 +149,7 @@ export async function mountStage(
   const renderer = new Live2DRenderer(container, {
     cubismLoader: () => loadCubismCore(manifest.core_url),
   });
-  await renderer.load(manifest.model_url);
+  const parameters = await renderer.load(manifest.model_url);
 
   let runtime: Runtime | null = null;
   try {
@@ -157,7 +159,7 @@ export async function mountStage(
       emotionPersonality: { targetApproachRate: 8 },
     });
     runtime.setIdleEnabled(true);
-    runtime.setLipSyncEnabled(true);
+    runtime.setLipSyncEnabled(false);
   } catch {
     runtime = null;
   }
@@ -170,13 +172,14 @@ export async function mountStage(
   let raf = 0;
   let last = performance.now();
   let stopped = false;
-  let motion: { name: string; startSec: number } | null = null;
+  let motion: { name: string; startSec: number; duration: number; mediaTime: number | null } | null = null;
+  const previousParams: Record<string, number> = {};
 
   /** 动作偏移：进行中返回对头部参数的加性偏移，结束自动清空。 */
   const motionOffset = (nowSec: number): Record<string, number> | null => {
     if (!motion) return null;
     const curve = MOTION_CURVES[motion.name];
-    const t = (nowSec - motion.startSec) / curve.durationSec;
+    const t = Math.max(0, ((motion.mediaTime ?? nowSec) - motion.startSec) / motion.duration);
     if (t >= 1) {
       motion = null;
       return null;
@@ -211,6 +214,12 @@ export async function mountStage(
     const params = runtime
       ? { ...runtime.update(now / 1000, dt).live2dParams }
       : blendParams(emotion, intensity, now / 1000, mouth);
+    // Smooth only the base, then add media-clock motion and final mouth ownership.
+    for (const [key, value] of Object.entries(params)) {
+      const previous = previousParams[key] ?? value;
+      params[key] = previous + (value - previous) * (1 - Math.exp(-dt / 0.083));
+      previousParams[key] = params[key];
+    }
     const offsets = motionOffset(now / 1000);
     if (offsets) {
       for (const [key, value] of Object.entries(offsets)) {
@@ -218,6 +227,11 @@ export async function mountStage(
       }
     }
     params[MOUTH_ID] = mouth;
+    for (const [key, value] of Object.entries(params)) {
+      const spec = parameters[key];
+      if (!spec || !Number.isFinite(value)) delete params[key];
+      else params[key] = Math.max(spec.min, Math.min(spec.max, value));
+    }
     renderer.setParameters(params);
     raf = requestAnimationFrame(frame);
   };
@@ -242,11 +256,16 @@ export async function mountStage(
         }, input.decayMs);
       }
     },
-    playMotion(name: string) {
+    playMotion(name: string, duration?: number, currentTime?: number) {
       // 占线直接丢弃（不排队）；闭集外的词忽略
       if (motion || !(name in MOTION_CURVES)) return;
-      motion = { name, startSec: performance.now() / 1000 };
+      motion = { name, startSec: currentTime ?? performance.now() / 1000,
+        duration: duration ?? MOTION_CURVES[name].durationSec, mediaTime: currentTime ?? null };
     },
+    setMotionTime(currentTime: number) {
+      if (motion && motion.mediaTime !== null) motion.mediaTime = currentTime;
+    },
+    stopMotion() { motion = null; },
     resetIdle() {
       window.clearTimeout(decayTimer);
       emotion = "日常";

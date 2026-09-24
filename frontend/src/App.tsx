@@ -4,37 +4,83 @@ import { useChat } from "./hooks/useChat";
 import { useRecorder } from "./hooks/useRecorder";
 import type { ChatMessage as ChatMessageModel } from "./types";
 import { Live2DStage, type Live2DHandle } from "./components/Live2DStage";
-import { DialoguePopup } from "./components/DialoguePopup";
+import { AssistantBubble } from "./components/AssistantBubble";
+import { UserBubble } from "./components/UserBubble";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { StatusBadge } from "./components/StatusBadge";
 import { ChatInput } from "./components/ChatInput";
 import type { Status } from "./hooks/useChat";
+import { PlaybackDirector, type Effect, type PlaybackEvent } from "./playback/director";
+import type { ChatEvent } from "./types";
+import { recordPlayback } from "./playback/telemetry";
 import styles from "./App.module.css";
 
 export default function App() {
   const stageRef = useRef<Live2DHandle | null>(null);
   const recordBtnRef = useRef<HTMLButtonElement | null>(null);
-  const audio = useAudioQueue({
-    onRms: (value) => stageRef.current?.setMouth(value),
-    // 句级动作锚定在对应音频的起播瞬间，时机跟播放窗口走
-    onItemStart: (item) => {
-      if (item.motion) stageRef.current?.playMotion(item.motion);
-    },
-  });
-  const onPerformance = useCallback((event: { emotion: string; intensity: number; decay_ms: number }) => {
-    stageRef.current?.setPerformance({
-      emotion: event.emotion,
-      intensity: event.intensity,
-      decayMs: event.decay_ms,
-    });
+  const director = useRef(new PlaybackDirector());
+  const [playbackComplete, setPlaybackComplete] = useState(true);
+  const [startedIndex, setStartedIndex] = useState<number | null>(null);
+  const report = useRef<(turnId: string, index: number, kind: "started" | "ended") => void>(() => {});
+  const execute = useCallback((effects: Effect[]) => {
+    for (const effect of effects) {
+      const stage = stageRef.current;
+      if (effect.type === "idle") stage?.resetIdle();
+      else if (effect.type === "stopMotion") stage?.stopMotion();
+      else if (effect.type === "clock") stage?.setMotionTime(effect.currentTime);
+      else if (effect.type === "motion") {
+        stage?.playMotion(effect.name, effect.duration, effect.currentTime);
+        recordPlayback(director.current.turnId, "motion_start", effect.index);
+      } else if (effect.type === "performance") {
+        stage?.setPerformance({ emotion: effect.value.emotion, intensity: effect.value.intensity, decayMs: 0 });
+        recordPlayback(director.current.turnId, "performance_applied");
+      }
+    }
   }, []);
-  const chat = useChat({ enqueueAudio: audio.enqueue, onPerformance });
+  const onPlayback = useCallback((event: PlaybackEvent) => {
+    if (event.type !== "clock") recordPlayback(event.turnId, event.type, event.index);
+    if (event.type === "playing" && event.turnId === director.current.turnId && !director.current.closed) {
+      setStartedIndex(event.index);
+    }
+    execute(director.current.dispatch(event));
+    if (event.type === "ended" || event.type === "failed") {
+      setPlaybackComplete(director.current.closed);
+    }
+    if (event.type === "playing" || event.type === "ended") {
+      report.current(event.turnId, event.index, event.type === "playing" ? "started" : "ended");
+    }
+  }, [execute]);
+  const audio = useAudioQueue({
+    onRms: (value) => stageRef.current?.setMouth(value), onPlayback,
+  });
+  const onEvent = useCallback((event: ChatEvent) => {
+    recordPlayback(event.turn_id, `received_${event.type}`, "index" in event ? event.index : undefined);
+    execute(director.current.dispatch(event));
+    if (event.type === "done" || event.type === "interrupted" || event.type === "error" || event.type === "audio_error") {
+      setPlaybackComplete(director.current.closed);
+    }
+  }, [execute]);
+  const onTurn = useCallback((turnId: string) => {
+    audio.clear();
+    setStartedIndex(null);
+    setPlaybackComplete(false);
+    execute(director.current.start(turnId));
+    recordPlayback(turnId, "send");
+  }, [audio.clear, execute]);
+  const onCancel = useCallback(() => {
+    recordPlayback(director.current.turnId, "interrupt");
+    execute(director.current.cancel());
+    setPlaybackComplete(true);
+    audio.fadeStop();
+  }, [execute, audio.fadeStop]);
+  const chat = useChat({ enqueueAudio: audio.enqueue, onEvent, onTurn, onCancel });
+  report.current = chat.reportPlayback;
   const recorder = useRecorder({ enabled: chat.asrEnabled, onTranscript: chat.send });
   const [historyOpen, setHistoryOpen] = useState(false);
 
   // 让路：她在说也立刻停（淡出 + 后端停流），听用户说
   const interrupt = useCallback(() => {
-    if (!chat.busy && !audio.isPlaying) return;
+    if (!chat.busy && !audio.activeKey) return;
     void chat.interrupt();
     audio.fadeStop();
   }, [chat, audio]);
@@ -71,8 +117,11 @@ export default function App() {
 
   const toggleAudio = useCallback((message: ChatMessageModel, index: number) => {
     const url = message.audio[index]?.url;
-    if (url) audio.toggle({ key: `${message.id}:${index}`, url });
-  }, [audio]);
+    if (url) {
+      if (audio.activeKey !== `${message.id}:${index}`) void chat.interrupt();
+      audio.toggle({ key: `${message.id}:${index}`, url });
+    }
+  }, [audio, chat]);
 
   const reset = useCallback(() => {
     stageRef.current?.resetIdle();
@@ -101,14 +150,19 @@ export default function App() {
         </button>
         <StatusBadge status={displayStatus} />
       </header>
-      <div className={`${styles.dock} ${historyOpen ? styles.dockHidden : ""}`} aria-hidden={historyOpen}>
-        <DialoguePopup
-          userText={lastUser?.text ?? null}
+      <div className={`${styles.speech} ${historyOpen ? styles.speechHidden : ""}`} aria-hidden={historyOpen}>
+        <AssistantBubble
           assistant={lastAssistant}
           activeKey={audio.activeKey}
           pending={chat.busy}
           playing={audio.isPlaying}
+          holding={audio.holding}
+          playbackComplete={playbackComplete}
+          startedIndex={startedIndex}
         />
+      </div>
+      <div className={`${styles.dock} ${historyOpen ? styles.dockHidden : ""}`} aria-hidden={historyOpen}>
+        {lastUser && <UserBubble text={lastUser.text} />}
         <ChatInput
           busy={chat.busy}
           asrEnabled={chat.asrEnabled}
@@ -119,6 +173,7 @@ export default function App() {
       </div>
       <HistoryPanel
         open={historyOpen}
+        sessionId={chat.sessionId}
         messages={chat.messages}
         disabled={chat.busy}
         activeKey={audio.activeKey}

@@ -1,7 +1,7 @@
 """动作闭集与句级标签解析。
 
 标签先行通道：句前 【动作:点头】。解析后不朗读、不进 UI、不进历史。
-一轮至多 2 个动作、不连续重复；超限/重复/非法词一律丢弃，但标签仍剥净不外漏。
+每个合法标签都按句保留，允许同一轮重复动作；非法词仍丢弃，但标签仍剥净不外漏。
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ import re
 
 MOTION_WORDS = ("点头", "摇头", "歪头")
 MOTION_WORD_SET = frozenset(MOTION_WORDS)
-MAX_MOTIONS_PER_TURN = 2
 
 # 句前标签：【动作:点头】 / [动作：点头]（括号与冒号全半角皆收）
 _MOTION_TAG_RE = re.compile(
@@ -37,15 +36,10 @@ def strip_motion_tags(text: str) -> str:
 
 
 class MotionPolicy:
-    """按轮执行「至多 2 个、不连续重复」。
-
-    重复按「相邻两个动作同词」判：被丢弃的那次也推进上次用词，
-    防止 点头/丢/点头 连续两次点头漏网。
-    """
+    """按句提取动作标签，不对同一轮的合法动作做次数或相邻去重。"""
 
     def __init__(self) -> None:
         self._accepted: list[str] = []
-        self._last: str | None = None
 
     @property
     def accepted(self) -> list[str]:
@@ -67,10 +61,6 @@ class MotionPolicy:
         clean = strip_motion_tags(text).strip()
         motion: str | None = None
         if intended is not None:
-            repeat = intended == self._last
-            over = len(self._accepted) >= MAX_MOTIONS_PER_TURN
-            self._last = intended
-            if not repeat and not over:
-                self._accepted.append(intended)
-                motion = intended
+            self._accepted.append(intended)
+            motion = intended
         return motion, clean
